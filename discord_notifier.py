@@ -61,9 +61,21 @@ def notify_roblox(data: dict, prev: dict | None = None):
     if data.get("error"):
         fields.append({"name": "Warning", "value": data["error"], "inline": False})
 
-    friends = data.get("friends_presence", [])
-    in_game = [f for f in friends if f.get("status") == "In Game"]
-    online  = [f for f in friends if f.get("status") in ("Online (Website)",)]
+    friends   = data.get("friends_presence", [])
+    her_game_id = data.get("game_id")  # None if she's not in a game
+
+    # Split friends into three buckets
+    same_server = [
+        f for f in friends
+        if f.get("status") == "In Game"
+        and her_game_id
+        and f.get("game_id") == her_game_id
+    ]
+    in_game = [
+        f for f in friends
+        if f.get("status") == "In Game" and f not in same_server
+    ]
+    online  = [f for f in friends if f.get("status") == "Online (Website)"]
 
     def _friend_link(f: dict) -> str:
         uid = f.get("user_id")
@@ -72,13 +84,16 @@ def notify_roblox(data: dict, prev: dict | None = None):
             return f"[{name}](https://www.roblox.com/users/{uid}/profile)"
         return f"**{name}**"
 
-    # Show counts in main embed so the header is visible even if friends scroll offscreen
+    if same_server:
+        fields.append({"name": f"👥 In Her Server ({len(same_server)})",
+                       "value": " ".join(_friend_link(f) for f in same_server[:20]) or "—",
+                       "inline": False})
     if in_game:
-        fields.append({"name": f"Friends In a Game ({len(in_game)})",
+        fields.append({"name": f"🎮 Friends In a Game ({len(in_game)})",
                        "value": " ".join(_friend_link(f) for f in in_game[:20]) or "—",
                        "inline": False})
     if online:
-        fields.append({"name": f"Friends Online ({len(online)})",
+        fields.append({"name": f"🌐 Friends Online ({len(online)})",
                        "value": " ".join(_friend_link(f) for f in online[:10]) or "—",
                        "inline": False})
 
@@ -99,13 +114,23 @@ def notify_roblox(data: dict, prev: dict | None = None):
     embeds = [main_embed]
 
     # One mini-embed per friend (up to 9, Discord max is 10 total)
-    shown = (in_game[:5] + online[:4])[:9]
+    # Priority: same-server first, then in-game elsewhere, then online
+    shown = (same_server[:3] + in_game[:3] + online[:3])[:9]
     for f in shown:
         profile_url = f"https://www.roblox.com/users/{f['user_id']}/profile" if f.get("user_id") else None
+        if f in same_server:
+            color = 0xFFD700  # gold — in her server
+            label = f"{f['name']} — 👥 Same Server"
+        elif f.get("status") == "In Game":
+            color = 0x00B04F  # green — in game elsewhere
+            label = f"{f['name']} — {f.get('game') or 'In Game'}"
+        else:
+            color = 0x5865F2  # blurple — online
+            label = f"{f['name']} — Online"
         friend_embed = {
-            "color": 0x00B04F if f.get("status") == "In Game" else 0x5865F2,
+            "color": color,
             "author": {
-                "name": f"{f['name']} — {f.get('game') or f.get('status', 'Online')}",
+                "name": label,
                 **({"url": profile_url} if profile_url else {}),
                 **({"icon_url": f["avatar_url"]} if f.get("avatar_url") else {}),
             },

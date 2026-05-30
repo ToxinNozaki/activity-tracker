@@ -199,10 +199,12 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
         result["status"] = PRESENCE_TYPES.get(ptype, "Unknown")
 
         if ptype == 2:
-            place_id     = presence.get("placeId")
+            place_id      = presence.get("placeId")
             root_place_id = presence.get("rootPlaceId")
-            job_id       = presence.get("gameId")
+            job_id        = presence.get("gameId")
             last_location = presence.get("lastLocation", "")
+
+            result["game_id"] = job_id  # server instance UUID for same-server detection
 
             if place_id:
                 details   = get_game_details(place_id)
@@ -254,6 +256,7 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
                                or f"User#{p.get('userId')}"),
                 "status":     PRESENCE_TYPES.get(p.get("userPresenceType", 0), "Offline"),
                 "game":       p.get("lastLocation") if p.get("userPresenceType") == 2 else None,
+                "game_id":    p.get("gameId"),  # server instance UUID
                 "avatar_url": thumbnail_map.get(p.get("userId")),
             }
             for p in active
