@@ -210,14 +210,17 @@ def notify_cookie_expired():
     _post(ERROR_CHANNEL_ID, {
         "content": f"<@{PING_USER_ID}>",
         "embeds": [{
-            "title": "Roblox Cookie Expired — Action Required",
+            "title": "🍪 Roblox Cookie Expired — Action Required",
             "description": (
-                "The Roblox cookie has expired. Tracking has stopped until it's updated.\n\n"
-                "**Fix:**\n"
-                "1. Go to roblox.com, log in\n"
-                "2. Press `F12` → Application tab → Cookies → copy `.ROBLOSECURITY`\n"
-                "3. Go to [GitHub Secrets](https://github.com/ToxinNozaki/activity-tracker/settings/secrets/actions)"
-                " and update `ROBLOX_COOKIE`"
+                "The Roblox cookie has expired. Tracking has paused until it's updated.\n\n"
+                "**⚡ Quick fix (easiest):**\n"
+                "1. Go to roblox.com and log in\n"
+                "2. Press `F12` → **Application** tab → **Cookies** → copy the `.ROBLOSECURITY` value\n"
+                "3. **DM this bot** the cookie — just paste it directly (it starts with `_|WARNING`)\n"
+                "↳ The bot will update the secret and restart tracking automatically.\n\n"
+                "**🔧 Manual fix (GitHub Secrets):**\n"
+                "Go to [GitHub Secrets](https://github.com/ToxinNozaki/activity-tracker/settings/secrets/actions) "
+                "and update `ROBLOX_COOKIE` manually."
             ),
             "color": 0xFF0000,
             "footer": {"text": _now_et()},

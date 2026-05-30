@@ -1,12 +1,11 @@
 """
-Cookie updater — checks for /setcookie DMs from the authorized user.
+Cookie updater — checks for cookie updates via DM from the authorized user.
 
-Usage: DM the bot with:   /setcookie <your .ROBLOSECURITY cookie>
-
-The next tracker run (within 5 min) will:
-  1. Delete the DM message immediately
-  2. Encrypt and push the new value to the ROBLOX_COOKIE GitHub secret
-  3. Reply confirming success or failure
+How to update your cookie:
+  1. DM the bot your raw cookie value (just paste it — starts with _|WARNING)
+     OR send:  cookie <value>
+  2. The bot deletes the message instantly and updates the GitHub secret
+  3. A new tracker run fires immediately so it comes back online right away
 """
 
 import os
@@ -20,7 +19,7 @@ BOT_TOKEN          = os.environ.get("DISCORD_BOT_TOKEN", "")
 GITHUB_PAT         = os.environ.get("GITHUB_PAT", "")
 AUTHORIZED_USER_ID = "1079478384901505045"
 REPO               = "ToxinNozaki/activity-tracker"
-LOOKBACK_MINUTES   = 10   # only act on commands from the last 10 minutes
+LOOKBACK_MINUTES   = 10
 
 _DISCORD = "https://discord.com/api/v10"
 _GITHUB  = "https://api.github.com"
@@ -37,12 +36,18 @@ def _d(method: str, path: str, **kwargs):
 
 
 def _get_or_create_dm() -> str | None:
-    """Return the DM channel ID between the bot and the authorized user."""
     r = _d("POST", "/users/@me/channels", json={"recipient_id": AUTHORIZED_USER_ID})
     return r.json().get("id") if r.ok else None
 
 
-# ── GitHub secret update ─────────────────────────────────────────────────────
+# ── GitHub helpers ───────────────────────────────────────────────────────────
+
+def _gh_headers() -> dict:
+    return {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
 
 def _encrypt(public_key_b64: str, value: str) -> str:
     from nacl import encoding, public as nacl_public
@@ -53,37 +58,64 @@ def _encrypt(public_key_b64: str, value: str) -> str:
 
 def _update_github_secret(name: str, value: str) -> bool:
     if not GITHUB_PAT:
-        logging.warning("GITHUB_PAT not set — cannot update secret")
+        logging.warning("cookie_updater: GITHUB_PAT not set")
         return False
-    headers = {
-        "Authorization": f"token {GITHUB_PAT}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-    # Get repo public key for encryption
     r = requests.get(f"{_GITHUB}/repos/{REPO}/actions/secrets/public-key",
-                     headers=headers, timeout=10)
+                     headers=_gh_headers(), timeout=10)
     if not r.ok:
-        logging.error("GitHub public key fetch failed: %s", r.text)
+        logging.error("cookie_updater: public key fetch failed: %s", r.text)
         return False
-    key_data   = r.json()
-    encrypted  = _encrypt(key_data["key"], value)
+    key_data  = r.json()
+    encrypted = _encrypt(key_data["key"], value)
     r2 = requests.put(
         f"{_GITHUB}/repos/{REPO}/actions/secrets/{name}",
-        headers=headers,
+        headers=_gh_headers(),
         json={"encrypted_value": encrypted, "key_id": key_data["key_id"]},
         timeout=10,
     )
     return r2.status_code in (201, 204)
 
 
+def _trigger_new_run():
+    """Fire an immediate tracker run so the new cookie takes effect now."""
+    if not GITHUB_PAT:
+        return
+    try:
+        requests.post(
+            f"{_GITHUB}/repos/{REPO}/dispatches",
+            headers=_gh_headers(),
+            json={"event_type": "run-tracker"},
+            timeout=10,
+        )
+        logging.info("cookie_updater: triggered immediate new run")
+    except Exception as e:
+        logging.warning("cookie_updater: could not trigger new run: %s", e)
+
+
+# ── Cookie detection ─────────────────────────────────────────────────────────
+
+def _extract_cookie(content: str) -> str | None:
+    """
+    Accept cookies in any of these formats:
+      - Raw paste:  _|WARNING:-...-|_CAEA...
+      - Prefixed:   cookie <value>
+      - Old style:  !setcookie <value>  or  /setcookie <value>
+    """
+    # Raw cookie (Roblox cookies always start with _|WARNING)
+    if content.startswith("_|WARNING"):
+        return content
+
+    # Explicit prefixes
+    m = re.match(r'^(?:cookie|[/!]setcookie)\s+(\S+)', content, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    return None
+
+
 # ── Main check ───────────────────────────────────────────────────────────────
 
 def check_for_cookie_update() -> bool:
-    """
-    Polls the bot's DM with the authorized user for a /setcookie command.
-    Deletes the message immediately and updates the GitHub secret if found.
-    Returns True if a cookie was updated.
-    """
     if not BOT_TOKEN:
         return False
 
@@ -99,11 +131,9 @@ def check_for_cookie_update() -> bool:
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=LOOKBACK_MINUTES)
 
     for msg in r.json():
-        # Must be from the authorized user
         if str(msg.get("author", {}).get("id")) != AUTHORIZED_USER_ID:
             continue
 
-        # Must be recent
         try:
             msg_time = datetime.fromisoformat(msg["timestamp"].replace("Z", "+00:00"))
             if msg_time < cutoff:
@@ -111,26 +141,26 @@ def check_for_cookie_update() -> bool:
         except Exception:
             continue
 
-        content = msg.get("content", "").strip()
-        match   = re.match(r'^[/!]setcookie\s+(\S+)', content, re.IGNORECASE)
-        if not match:
+        cookie = _extract_cookie(msg.get("content", "").strip())
+        if not cookie:
             continue
 
-        cookie = match.group(1).strip()
-
-        # Delete the message right away — cookie should not stay in Discord
+        # Delete immediately — cookie must not stay in Discord
         _d("DELETE", f"/channels/{dm_channel}/messages/{msg['id']}")
-        logging.info("cookie_updater: /setcookie received, message deleted")
+        logging.info("cookie_updater: cookie message detected and deleted")
 
-        # Push to GitHub Secrets
         ok = _update_github_secret("ROBLOX_COOKIE", cookie)
 
-        reply = (
-            "✅ **Cookie updated!** It will take effect on the next tracker run."
-            if ok else
-            "❌ **Failed to update cookie.** Make sure the `GITHUB_PAT` secret is set "
-            "with `repo` / secrets-write scope."
-        )
+        if ok:
+            _trigger_new_run()
+            reply = "✅ **Cookie updated!** Firing a new tracker run right now — it'll be back online in seconds."
+        else:
+            reply = (
+                "❌ **Failed to update cookie.**\n"
+                "Make sure the `GITHUB_PAT` secret has `repo` scope "
+                "(Settings → Secrets → GITHUB_PAT)."
+            )
+
         _d("POST", f"/channels/{dm_channel}/messages", json={"content": reply})
         logging.info("cookie_updater: secret update %s", "OK" if ok else "FAILED")
         return ok
