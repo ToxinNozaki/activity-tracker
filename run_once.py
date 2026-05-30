@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from roblox_tracker import check_roblox_activity, CookieExpiredError, get_usernames_by_ids, get_user_thumbnails
+from cookie_updater import check_for_cookie_update
 from epic_tracker import check_epic_activity
 from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
@@ -66,6 +67,9 @@ def main():
     auth_file = Path("epic_auth.json")
     if epic_secret and not auth_file.exists():
         auth_file.write_text(epic_secret)
+
+    # Check for /setcookie DM command before anything else
+    check_for_cookie_update()
 
     state = load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
