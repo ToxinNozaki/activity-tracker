@@ -14,6 +14,8 @@ concurrency:
 jobs:
   track:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write              # needed so GITHUB_TOKEN can fire repository_dispatch
 
     steps:
       - name: Checkout repo
