@@ -52,6 +52,12 @@ def notify_roblox(data: dict, prev: dict | None = None):
         fields.append({"name": "Players in Her Server",
                        "value": str(data["server_player_count"]), "inline": True})
 
+    if data.get("session_minutes") is not None and data.get("status") == "In Game":
+        m = data["session_minutes"]
+        h, rem = divmod(m, 60)
+        dur = f"{h}h {rem}m" if (h and rem) else (f"{h}h" if h else (f"{m}m" if m else "< 1 min"))
+        fields.append({"name": "Session", "value": dur, "inline": True})
+
     if data.get("error"):
         fields.append({"name": "Warning", "value": data["error"], "inline": False})
 
@@ -234,6 +240,63 @@ def notify_status(roblox_ok: bool, epic_ok: bool,
         "description": f"**Roblox** — {r}\n**Fortnite** — {e}",
         "color": color,
         "footer": {"text": _now_et()},
+    }]})
+
+
+def _fmt_time(minutes: int) -> str:
+    if minutes <= 0:
+        return "0 min"
+    h, m = divmod(minutes, 60)
+    return f"{h}h {m}m" if (h and m) else (f"{h}h" if h else f"{m}m")
+
+
+def notify_daily_summary(stats: dict):
+    date_str = stats.get("date", "")
+    try:
+        from datetime import datetime as _dt
+        label = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A, %B %d, %Y")
+    except Exception:
+        label = date_str
+
+    fields = [
+        {"name": "Total Online",  "value": _fmt_time(stats.get("online_minutes", 0)),  "inline": True},
+        {"name": "Time In Game",  "value": _fmt_time(stats.get("in_game_minutes", 0)), "inline": True},
+    ]
+
+    games = stats.get("games", {})
+    if games:
+        medals = ["🥇", "🥈", "🥉"] + ["▸"] * 20
+        top    = sorted(games.items(), key=lambda x: x[1], reverse=True)[:10]
+        lines  = "\n".join(f"{medals[i]} **{g}** — {_fmt_time(m)}" for i, (g, m) in enumerate(top))
+        fields.append({"name": "Games Played", "value": lines, "inline": False})
+
+    friends = [f for f in stats.get("friends_seen", []) if f]
+    if friends:
+        fields.append({
+            "name":   f"Friends Seen ({len(friends)})",
+            "value":  ", ".join(sorted(friends)[:30]),
+            "inline": False,
+        })
+
+    _post(ROBLOX_CHANNEL_ID, {"embeds": [{
+        "title":  f"📊 Daily Summary — {label}",
+        "color":  0x5865F2,
+        "fields": fields,
+        "footer": {"text": _now_et()},
+    }]})
+
+
+def notify_weekly_games(game_stats: dict):
+    if not game_stats:
+        return
+    medals = ["🥇", "🥈", "🥉"] + [f"{i}." for i in range(4, 11)]
+    top    = sorted(game_stats.items(), key=lambda x: x[1], reverse=True)[:10]
+    lines  = "\n".join(f"{medals[i]} **{g}** — {_fmt_time(m)}" for i, (g, m) in enumerate(top))
+    _post(ROBLOX_CHANNEL_ID, {"embeds": [{
+        "title":       "🏆 Weekly Most Played Games",
+        "description": lines,
+        "color":       0xFFD700,
+        "footer":      {"text": _now_et()},
     }]})
 
 

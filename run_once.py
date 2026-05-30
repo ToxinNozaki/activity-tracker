@@ -18,6 +18,7 @@ from epic_tracker import check_epic_activity
 from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
     notify_cookie_expired, notify_status, notify_new_friends, notify_unfriended,
+    notify_daily_summary, notify_weekly_games,
 )
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -82,6 +83,25 @@ def main():
         roblox_data = check_roblox_activity("Moonstar_dovetail", target_user_id=2622410591)
         logging.info("ROBLOX: %s", json.dumps(roblox_data))
 
+        # ── Session timer ────────────────────────────────────────────────────
+        current_game  = roblox_data.get("game")
+        prev_game     = state.get("current_game")
+        game_start_ts = state.get("current_game_start")
+
+        if current_game:
+            if current_game == prev_game and game_start_ts:
+                start = datetime.fromisoformat(game_start_ts)
+                roblox_data["session_minutes"] = int(
+                    (datetime.now(timezone.utc) - start).total_seconds() / 60
+                )
+            else:
+                state["current_game"]       = current_game
+                state["current_game_start"] = datetime.now(timezone.utc).isoformat()
+                roblox_data["session_minutes"] = 0
+        else:
+            state["current_game"]       = None
+            state["current_game_start"] = None
+
         if roblox_data.get("cookie_expired"):
             notify_cookie_expired()
             roblox_ok  = False
@@ -127,6 +147,45 @@ def main():
 
         if current_ids:
             state["roblox_friend_ids"] = list(current_ids)
+
+        # ── Daily stats ──────────────────────────────────────────────────────
+        today_str = datetime.now(_EASTERN).strftime("%Y-%m-%d")
+        daily     = state.get("daily_stats") or {}
+
+        if daily.get("date") != today_str:
+            # Day rolled over — post yesterday's summary if it has data
+            if daily.get("date") and daily.get("online_minutes", 0) > 0:
+                notify_daily_summary(daily)
+                logging.info("Daily summary posted for %s", daily["date"])
+            daily = {"date": today_str, "online_minutes": 0,
+                     "in_game_minutes": 0, "games": {}, "friends_seen": []}
+
+        status = roblox_data.get("status", "Offline")
+        if status in ("Online (Website)", "In Game", "In Studio"):
+            daily["online_minutes"] = daily.get("online_minutes", 0) + 5
+        if status == "In Game" and current_game:
+            daily["in_game_minutes"] = daily.get("in_game_minutes", 0) + 5
+            daily.setdefault("games", {})[current_game] = (
+                daily["games"].get(current_game, 0) + 5
+            )
+        friends_seen = set(daily.get("friends_seen", []))
+        for f in roblox_data.get("friends_presence", []):
+            if f.get("name"):
+                friends_seen.add(f["name"])
+        daily["friends_seen"] = list(friends_seen)
+        state["daily_stats"]  = daily
+
+        # ── Weekly game stats ────────────────────────────────────────────────
+        if status == "In Game" and current_game:
+            gs = state.setdefault("game_stats", {})
+            gs[current_game] = gs.get(current_game, 0) + 5
+
+        if minutes_since(state.get("last_weekly_ts")) >= 7 * 24 * 60:
+            gs = state.get("game_stats") or {}
+            notify_weekly_games(gs)
+            logging.info("Weekly game stats posted.")
+            state["game_stats"]     = {}
+            state["last_weekly_ts"] = now_iso
 
     except Exception as e:
         roblox_ok  = False
