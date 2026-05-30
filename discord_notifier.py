@@ -4,7 +4,9 @@ from datetime import datetime
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 
-ACTIVITY_CHANNEL_ID = "1510143312315678800"
+ROBLOX_CHANNEL_ID   = "1510146907060699156"
+FORTNITE_CHANNEL_ID = "1510146847530811473"
+STATUS_CHANNEL_ID   = "1510146836491665579"
 ERROR_CHANNEL_ID    = "1510142665453207715"
 PING_USER_ID        = "1079478384901505045"
 
@@ -81,7 +83,7 @@ def notify_roblox(data: dict, prev: dict | None = None):
                    f"?userId={data['user_id']}&width=150&height=150&format=png"
         }
 
-    _post(ACTIVITY_CHANNEL_ID, {"embeds": [embed]})
+    _post(ROBLOX_CHANNEL_ID, {"embeds": [embed]})
 
 
 def notify_epic(data: dict, prev: dict | None = None):
@@ -110,7 +112,7 @@ def notify_epic(data: dict, prev: dict | None = None):
     if data.get("error"):
         fields.append({"name": "Warning", "value": data["error"], "inline": False})
 
-    _post(ACTIVITY_CHANNEL_ID, {"embeds": [{
+    _post(FORTNITE_CHANNEL_ID, {"embeds": [{
         "title": f"Fortnite — {username}",
         "color": color,
         "fields": fields,
@@ -154,7 +156,7 @@ def notify_status(roblox_ok: bool, epic_ok: bool,
     r = "✅ Connected" if roblox_ok else f"❌ {roblox_msg}"
     e = "✅ Connected" if epic_ok   else f"❌ {epic_msg}"
     color = 0x00B04F if (roblox_ok and epic_ok) else (0xFF0000 if not roblox_ok and not epic_ok else 0xFFA500)
-    _post(ACTIVITY_CHANNEL_ID, {"embeds": [{
+    _post(STATUS_CHANNEL_ID, {"embeds": [{
         "title": "15-Minute Status Check",
         "description": f"**Roblox** — {r}\n**Fortnite** — {e}",
         "color": color,
@@ -163,7 +165,7 @@ def notify_status(roblox_ok: bool, epic_ok: bool,
 
 
 def notify_startup():
-    _post(ACTIVITY_CHANNEL_ID, {"embeds": [{
+    _post(STATUS_CHANNEL_ID, {"embeds": [{
         "title": "Activity Tracker Online",
         "description": (
             "Now tracking **Moonstar_dovetail** on Roblox "
