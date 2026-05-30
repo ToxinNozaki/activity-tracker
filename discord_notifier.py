@@ -59,14 +59,21 @@ def notify_roblox(data: dict, prev: dict | None = None):
     in_game = [f for f in friends if f.get("status") == "In Game"]
     online  = [f for f in friends if f.get("status") in ("Online (Website)",)]
 
+    def _friend_link(f: dict) -> str:
+        uid = f.get("user_id")
+        name = f.get("name", "?")
+        if uid:
+            return f"[{name}](https://www.roblox.com/users/{uid}/profile)"
+        return f"**{name}**"
+
     # Show counts in main embed so the header is visible even if friends scroll offscreen
     if in_game:
         fields.append({"name": f"Friends In a Game ({len(in_game)})",
-                       "value": " ".join(f"**{f['name']}**" for f in in_game[:20]) or "—",
+                       "value": " ".join(_friend_link(f) for f in in_game[:20]) or "—",
                        "inline": False})
     if online:
         fields.append({"name": f"Friends Online ({len(online)})",
-                       "value": " ".join(f"**{f['name']}**" for f in online[:10]) or "—",
+                       "value": " ".join(_friend_link(f) for f in online[:10]) or "—",
                        "inline": False})
 
     main_embed = {
