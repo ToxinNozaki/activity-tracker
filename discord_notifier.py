@@ -1,39 +1,37 @@
 import os
 import requests
+from datetime import datetime
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
-CHANNEL_ID = os.environ.get("DISCORD_CHANNEL_ID", "")
+
+ACTIVITY_CHANNEL_ID = "1510143312315678800"
+ERROR_CHANNEL_ID    = "1510142665453207715"
+PING_USER_ID        = "1079478384901505045"
 
 _API = "https://discord.com/api/v10"
 
 
-def _post_message(payload: dict):
-    if not BOT_TOKEN or not CHANNEL_ID:
+def _post(channel_id: str, payload: dict):
+    if not BOT_TOKEN:
+        print("WARNING: DISCORD_BOT_TOKEN not set")
         return
     requests.post(
-        f"{_API}/channels/{CHANNEL_ID}/messages",
-        headers={
-            "Authorization": f"Bot {BOT_TOKEN}",
-            "Content-Type": "application/json",
-        },
+        f"{_API}/channels/{channel_id}/messages",
+        headers={"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"},
         json=payload,
         timeout=10,
     )
 
 
 def _roblox_color(status: str) -> int:
-    return {
-        "In Game": 0x00B04F,
-        "Online (Website)": 0x5865F2,
-        "In Studio": 0xFFA500,
-        "Offline": 0x747F8D,
-    }.get(status, 0x747F8D)
+    return {"In Game": 0x00B04F, "Online (Website)": 0x5865F2,
+            "In Studio": 0xFFA500, "Offline": 0x747F8D}.get(status, 0x747F8D)
 
 
 def notify_roblox(data: dict, prev: dict | None = None):
-    status = data.get("status", "Unknown")
+    status  = data.get("status", "Unknown")
     username = data.get("username", "?")
-    ts = data.get("timestamp", "")
+    ts      = data.get("timestamp", "")
 
     if prev and prev.get("status") == status and prev.get("game") == data.get("game"):
         return
@@ -44,83 +42,134 @@ def notify_roblox(data: dict, prev: dict | None = None):
         fields.append({"name": "Playing", "value": data["game"], "inline": True})
     if data.get("game_url"):
         fields.append({"name": "Game Link", "value": data["game_url"], "inline": False})
-    if data.get("last_location") and not data.get("game"):
-        fields.append({"name": "Location", "value": data["last_location"], "inline": True})
 
-    online_friends = data.get("online_friends", [])
-    if online_friends:
-        names = ", ".join(f["name"] for f in online_friends[:15])
-        fields.append({
-            "name": f"Her Online Friends ({len(online_friends)})",
-            "value": names,
-            "inline": False,
-        })
+    if data.get("server_player_count") is not None:
+        fields.append({"name": "Players in Her Server",
+                       "value": str(data["server_player_count"]), "inline": True})
+    if data.get("total_playing"):
+        fields.append({"name": "Total in Game",
+                       "value": f"{data['total_playing']:,}", "inline": True})
+
+    # Friends — split into in-game vs just online
+    friends = data.get("friends_presence", [])
+    in_game  = [f for f in friends if f.get("status") == "In Game"]
+    online   = [f for f in friends if f.get("status") in ("Online (Website)",)]
+
+    if in_game:
+        lines = "\n".join(
+            f"• **{f['name']}** — {f.get('game') or 'In Game'}" for f in in_game[:15]
+        )
+        fields.append({"name": f"Friends In a Game ({len(in_game)})",
+                       "value": lines, "inline": False})
+    if online:
+        lines = "\n".join(f"• **{f['name']}**" for f in online[:10])
+        fields.append({"name": f"Friends Online ({len(online)})",
+                       "value": lines, "inline": False})
 
     if data.get("error"):
-        fields.append({"name": "Error", "value": data["error"], "inline": False})
+        fields.append({"name": "Warning", "value": data["error"], "inline": False})
 
     embed = {
         "title": f"Roblox — {username}",
         "color": _roblox_color(status),
         "fields": fields,
-        "footer": {"text": f"Checked at {ts}"},
+        "footer": {"text": f"Logged at {ts}"},
     }
     if data.get("user_id"):
         embed["thumbnail"] = {
-            "url": f"https://www.roblox.com/headshot-thumbnail/image?userId={data['user_id']}&width=150&height=150&format=png"
+            "url": f"https://www.roblox.com/headshot-thumbnail/image"
+                   f"?userId={data['user_id']}&width=150&height=150&format=png"
         }
 
-    _post_message({"embeds": [embed]})
+    _post(ACTIVITY_CHANNEL_ID, {"embeds": [embed]})
 
 
 def notify_epic(data: dict, prev: dict | None = None):
     username = data.get("username", "?")
-    online = data.get("online", False)
-    playing = data.get("playing", False)
-    ts = data.get("timestamp", "")
+    online   = data.get("online", False)
+    playing  = data.get("playing", False)
+    ts       = data.get("timestamp", "")
 
-    if prev and (
-        prev.get("online") == online
-        and prev.get("playing") == playing
-        and prev.get("game_mode") == data.get("game_mode")
-        and prev.get("party_size") == data.get("party_size")
-    ):
+    if prev and (prev.get("online") == online and prev.get("playing") == playing
+                 and prev.get("game_mode") == data.get("game_mode")
+                 and prev.get("party_size") == data.get("party_size")):
         return
 
-    if online and playing:
-        color, status_label = 0x00B04F, "In Game"
-    elif online:
-        color, status_label = 0x5865F2, "Online"
-    else:
-        color, status_label = 0x747F8D, "Offline"
+    color = 0x00B04F if (online and playing) else (0x5865F2 if online else 0x747F8D)
+    label = "In Game" if (online and playing) else ("Online" if online else "Offline")
 
-    fields = [{"name": "Status", "value": status_label, "inline": True}]
-
+    fields = [{"name": "Status", "value": label, "inline": True}]
     if data.get("game_mode"):
         fields.append({"name": "Mode", "value": data["game_mode"], "inline": True})
     if data.get("party_size") is not None:
-        party = f"{data['party_size']} / {data.get('party_max') or '?'}"
-        fields.append({"name": "Party Size", "value": party, "inline": True})
+        fields.append({"name": "Party",
+                       "value": f"{data['party_size']} / {data.get('party_max') or '?'}",
+                       "inline": True})
     if data.get("status_text"):
         fields.append({"name": "Full Status", "value": data["status_text"], "inline": False})
     if data.get("error"):
-        fields.append({"name": "Error", "value": data["error"], "inline": False})
+        fields.append({"name": "Warning", "value": data["error"], "inline": False})
 
-    embed = {
+    _post(ACTIVITY_CHANNEL_ID, {"embeds": [{
         "title": f"Fortnite — {username}",
         "color": color,
         "fields": fields,
-        "footer": {"text": f"Checked at {ts}"},
-    }
+        "footer": {"text": f"Logged at {ts}"},
+    }]})
 
-    _post_message({"embeds": [embed]})
+
+def notify_cookie_expired():
+    _post(ERROR_CHANNEL_ID, {
+        "content": f"<@{PING_USER_ID}>",
+        "embeds": [{
+            "title": "Roblox Cookie Expired — Action Required",
+            "description": (
+                "The Roblox cookie has expired. Tracking has stopped until it's updated.\n\n"
+                "**Fix:**\n"
+                "1. Go to roblox.com, log in\n"
+                "2. Press `F12` → Application tab → Cookies → copy `.ROBLOSECURITY`\n"
+                "3. Go to [GitHub Secrets](https://github.com/ToxinNozaki/activity-tracker/settings/secrets/actions)"
+                " and update `ROBLOX_COOKIE`"
+            ),
+            "color": 0xFF0000,
+            "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+        }],
+    })
+
+
+def notify_error(source: str, message: str, details: str = ""):
+    embed = {
+        "title": f"Error — {source}",
+        "description": message,
+        "color": 0xFF0000,
+        "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+    }
+    if details:
+        embed["fields"] = [{"name": "Details", "value": details[:1000], "inline": False}]
+    _post(ERROR_CHANNEL_ID, {"embeds": [embed]})
+
+
+def notify_status(roblox_ok: bool, epic_ok: bool,
+                  roblox_msg: str = "", epic_msg: str = ""):
+    r = "✅ Connected" if roblox_ok else f"❌ {roblox_msg}"
+    e = "✅ Connected" if epic_ok   else f"❌ {epic_msg}"
+    color = 0x00B04F if (roblox_ok and epic_ok) else (0xFF0000 if not roblox_ok and not epic_ok else 0xFFA500)
+    _post(ACTIVITY_CHANNEL_ID, {"embeds": [{
+        "title": "15-Minute Status Check",
+        "description": f"**Roblox** — {r}\n**Fortnite** — {e}",
+        "color": color,
+        "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+    }]})
 
 
 def notify_startup():
-    _post_message({
-        "embeds": [{
-            "title": "Activity Tracker started",
-            "description": "Tracking **Moonstar_dovetail** (Roblox) and **ReesieLuvsChan** (Fortnite).\nChecking every 5 minutes — I'll only post when something changes.",
-            "color": 0x5865F2,
-        }]
-    })
+    _post(ACTIVITY_CHANNEL_ID, {"embeds": [{
+        "title": "Activity Tracker Online",
+        "description": (
+            "Now tracking **Moonstar_dovetail** on Roblox "
+            "and **ReesieLuvsChan** on Fortnite.\n"
+            "Activity updates on change · Status check every 15 min"
+        ),
+        "color": 0x5865F2,
+        "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+    }]})

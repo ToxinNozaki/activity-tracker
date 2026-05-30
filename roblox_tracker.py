@@ -11,6 +11,7 @@ PRESENCE_TYPES = {
     3: "In Studio",
 }
 
+
 def _headers():
     return {
         "Cookie": f".ROBLOSECURITY={COOKIE}",
@@ -19,13 +20,22 @@ def _headers():
     }
 
 
+class CookieExpiredError(Exception):
+    pass
+
+
+def _check_auth(resp: requests.Response):
+    if resp.status_code == 401:
+        raise CookieExpiredError("Roblox cookie has expired")
+
+
 def get_user_id(username: str) -> int | None:
     resp = requests.post(
         "https://users.roblox.com/v1/usernames/users",
         json={"usernames": [username], "excludeBannedUsers": True},
-        headers=_headers(),
-        timeout=10,
+        headers=_headers(), timeout=10,
     )
+    _check_auth(resp)
     resp.raise_for_status()
     data = resp.json().get("data", [])
     return data[0]["id"] if data else None
@@ -35,47 +45,87 @@ def get_presence(user_ids: list[int]) -> list[dict]:
     resp = requests.post(
         "https://presence.roblox.com/v1/presence/users",
         json={"userIds": user_ids},
-        headers=_headers(),
-        timeout=10,
+        headers=_headers(), timeout=10,
     )
+    _check_auth(resp)
     resp.raise_for_status()
     return resp.json().get("userPresences", [])
 
 
-def get_online_friends(user_id: int) -> list[dict]:
+def get_friends_list(user_id: int) -> list[dict]:
     resp = requests.get(
-        f"https://friends.roblox.com/v1/users/{user_id}/friends/online",
-        headers=_headers(),
-        timeout=10,
+        f"https://friends.roblox.com/v1/users/{user_id}/friends",
+        headers=_headers(), timeout=10,
     )
-    resp.raise_for_status()
+    _check_auth(resp)
+    if not resp.ok:
+        return []
     return resp.json().get("data", [])
 
 
 def get_game_details(place_id: int) -> dict:
     resp = requests.get(
         f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={place_id}",
-        headers=_headers(),
-        timeout=10,
+        headers=_headers(), timeout=10,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        return {}
     data = resp.json()
     return data[0] if data else {}
+
+
+def get_universe_id(place_id: int) -> int | None:
+    resp = requests.get(
+        f"https://apis.roblox.com/universes/v1/places/{place_id}/universe",
+        timeout=10,
+    )
+    if resp.ok:
+        return resp.json().get("universeId")
+    return None
+
+
+def get_game_stats(universe_id: int) -> dict:
+    resp = requests.get(
+        f"https://games.roblox.com/v1/games?universeIds={universe_id}",
+        timeout=10,
+    )
+    if resp.ok:
+        data = resp.json().get("data", [])
+        return data[0] if data else {}
+    return {}
+
+
+def get_server_player_count(universe_id: int, job_id: str) -> int | None:
+    """Find her specific server and return its player count."""
+    try:
+        resp = requests.get(
+            f"https://games.roblox.com/v1/games/{universe_id}/servers/Public?limit=100",
+            headers=_headers(), timeout=10,
+        )
+        if resp.ok:
+            for server in resp.json().get("data", []):
+                if server.get("id") == job_id:
+                    return server.get("playing")
+    except Exception:
+        pass
+    return None
 
 
 def check_roblox_activity(target_username: str, target_user_id: int | None = None) -> dict:
     result = {
         "username": target_username,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         "status": "Unknown",
         "game": None,
         "game_url": None,
-        "online_friends": [],
+        "server_player_count": None,
+        "total_playing": None,
+        "friends_presence": [],
         "error": None,
+        "cookie_expired": False,
     }
 
     try:
-        # Prefer hardcoded user ID — avoids an extra API call and survives username changes
         user_id = target_user_id or get_user_id(target_username)
         if not user_id:
             result["error"] = f"User '{target_username}' not found"
@@ -83,9 +133,10 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
 
         result["user_id"] = user_id
 
+        # Her presence
         presences = get_presence([user_id])
         if not presences:
-            result["error"] = "Could not fetch presence data"
+            result["error"] = "Could not fetch presence"
             return result
 
         presence = presences[0]
@@ -93,30 +144,54 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
         result["status"] = PRESENCE_TYPES.get(ptype, "Unknown")
 
         if ptype == 2:
-            place_id = presence.get("placeId")
+            place_id     = presence.get("placeId")
             root_place_id = presence.get("rootPlaceId")
+            job_id       = presence.get("gameId")
             last_location = presence.get("lastLocation", "")
 
             if place_id:
-                details = get_game_details(place_id)
+                details   = get_game_details(place_id)
                 game_name = details.get("name") or last_location or "Unknown game"
-                universe_id = details.get("universeId")
-                result["game"] = game_name
-                result["place_id"] = place_id
+                result["game"]          = game_name
                 result["last_location"] = last_location
                 if root_place_id:
                     result["game_url"] = f"https://www.roblox.com/games/{root_place_id}"
 
-        online_friends = get_online_friends(user_id)
-        result["online_friends"] = [
-            {
-                "name": f.get("name", ""),
-                "display_name": f.get("displayName", ""),
-                "user_id": f.get("id"),
-            }
-            for f in online_friends
-        ]
+                universe_id = get_universe_id(place_id)
+                if universe_id:
+                    stats = get_game_stats(universe_id)
+                    result["total_playing"] = stats.get("playing")
+                    if job_id:
+                        result["server_player_count"] = get_server_player_count(universe_id, job_id)
 
+        # Her friends' presences
+        friends = get_friends_list(user_id)
+        if friends:
+            friend_ids = [f["id"] for f in friends]
+            friend_map = {f["id"]: f["name"] for f in friends}
+
+            # Batch in chunks of 50 (API limit)
+            friend_presences = []
+            for i in range(0, len(friend_ids), 50):
+                chunk = friend_ids[i:i+50]
+                try:
+                    friend_presences.extend(get_presence(chunk))
+                except Exception:
+                    pass
+
+            result["friends_presence"] = [
+                {
+                    "name":   friend_map.get(p.get("userId"), "Unknown"),
+                    "status": PRESENCE_TYPES.get(p.get("userPresenceType", 0), "Offline"),
+                    "game":   p.get("lastLocation") if p.get("userPresenceType") == 2 else None,
+                }
+                for p in friend_presences
+                if p.get("userPresenceType", 0) in (1, 2)  # online or in-game only
+            ]
+
+    except CookieExpiredError:
+        result["cookie_expired"] = True
+        result["error"] = "Cookie expired"
     except requests.HTTPError as e:
         result["error"] = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
     except Exception as e:
