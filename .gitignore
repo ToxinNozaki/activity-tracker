@@ -1,0 +1,7 @@
+.env
+epic_auth.json
+device_auth.json
+logs/
+.state.json
+__pycache__/
+*.pyc

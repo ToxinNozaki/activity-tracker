@@ -1,0 +1,60 @@
+name: Activity Tracker
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # every 5 minutes
+  workflow_dispatch:          # lets you trigger it manually from GitHub too
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests python-dotenv apscheduler
+
+      # Restore .state.json and epic_auth.json from the previous run
+      - name: Restore cached runtime files
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .state.json
+            epic_auth.json
+          key: tracker-runtime-${{ github.run_number }}
+          restore-keys: |
+            tracker-runtime-
+
+      # Write epic_auth.json from secret only if cache didn't restore it
+      - name: Write Epic auth from secret (first run only)
+        run: |
+          if [ ! -f epic_auth.json ]; then
+            echo "$EPIC_AUTH_JSON" > epic_auth.json
+          fi
+        env:
+          EPIC_AUTH_JSON: ${{ secrets.EPIC_AUTH_JSON }}
+
+      - name: Run tracker check
+        env:
+          ROBLOX_COOKIE: ${{ secrets.ROBLOX_COOKIE }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          EPIC_AUTH_JSON: ${{ secrets.EPIC_AUTH_JSON }}
+        run: python run_once.py
+
+      # Save updated state and refreshed Epic token for the next run
+      - name: Save runtime files to cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            .state.json
+            epic_auth.json
+          key: tracker-runtime-${{ github.run_number }}
