@@ -51,9 +51,6 @@ def notify_roblox(data: dict, prev: dict | None = None):
     if data.get("server_player_count") is not None:
         fields.append({"name": "Players in Her Server",
                        "value": str(data["server_player_count"]), "inline": True})
-    if data.get("total_playing"):
-        fields.append({"name": "Total in Game",
-                       "value": f"{data['total_playing']:,}", "inline": True})
 
     if data.get("error"):
         fields.append({"name": "Warning", "value": data["error"], "inline": False})
