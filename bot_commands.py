@@ -226,7 +226,7 @@ def check_server_commands(state: dict) -> None:
 
         # Normalise: strip leading / or ! and lowercase
         raw     = msg.get("content", "").strip()
-        content = raw.lstrip("/!").lower().split()[0] if raw else ""
+        content = (raw.lstrip("/!").lower().split() or [""])[0]
 
         if content == "restart":
             state[_LAST_CMD_ID] = msg_id

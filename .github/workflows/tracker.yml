@@ -27,7 +27,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests python-dotenv apscheduler pynacl
+        run: pip install requests python-dotenv pynacl
 
       # Restore .state.json and epic_auth.json from the previous run
       - name: Restore cached runtime files
@@ -57,6 +57,7 @@ jobs:
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           EPIC_AUTH_JSON: ${{ secrets.EPIC_AUTH_JSON }}
           GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: python run_once.py
 
       # Report any Python crash to Discord

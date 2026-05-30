@@ -42,41 +42,6 @@ STATE_FILE = Path(".state.json")
 STATUS_INTERVAL_MINUTES = 15
 
 
-_SLASH_REGISTERED_FILE = Path(".slash_registered")
-
-def _maybe_register_slash_commands():
-    """Register Discord slash commands once per day via the API (idempotent)."""
-    # Use a local file as a flag — reset daily via GitHub Actions fresh runner
-    if _SLASH_REGISTERED_FILE.exists():
-        return
-    try:
-        token = os.environ.get("DISCORD_BOT_TOKEN", "")
-        if not token:
-            return
-        r = _requests.get("https://discord.com/api/v10/users/@me",
-                          headers={"Authorization": f"Bot {token}"}, timeout=10)
-        if not r.ok:
-            return
-        app_id = r.json().get("id")
-        if not app_id:
-            return
-        commands = [
-            {"name": "restart", "description": "Trigger a new tracker run immediately and reset timers"},
-            {"name": "status",  "description": "Show current Roblox + Fortnite tracker status"},
-            {"name": "help",    "description": "List all available bot commands"},
-        ]
-        for cmd in commands:
-            _requests.post(
-                f"https://discord.com/api/v10/applications/{app_id}/commands",
-                headers={"Authorization": f"Bot {token}"},
-                json=cmd, timeout=10,
-            )
-        _SLASH_REGISTERED_FILE.touch()
-        logging.info("Slash commands registered with Discord")
-    except Exception as e:
-        logging.warning("Could not register slash commands: %s", e)
-
-
 def check_credentials():
     """
     Validate each secret/token against its respective API.
@@ -167,9 +132,6 @@ def main():
 
     # Check for /setcookie DM command before anything else
     check_for_cookie_update()
-
-    # Register slash commands once per day (idempotent — Discord deduplicates)
-    _maybe_register_slash_commands()
 
     state = load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
