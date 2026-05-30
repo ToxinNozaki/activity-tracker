@@ -397,6 +397,82 @@ def notify_peak_hours(hourly: dict):
     }]})
 
 
+def notify_server_hop(game_name: str, player_count: int | None):
+    count_str = f"\n**Players in new server:** {player_count}" if player_count else ""
+    _post(ROBLOX_CHANNEL_ID, {"embeds": [{
+        "title": "🔀 Server Hop Detected",
+        "description": f"Switched to a different **{game_name}** server.{count_str}",
+        "color": 0xFFA500,
+        "footer": {"text": _now_et()},
+    }]})
+
+
+def notify_avatar_changed(username: str, user_id: int, new_avatar_url: str):
+    embed = {
+        "title": f"👗 Avatar Changed — {username}",
+        "description": "Her Roblox avatar has been updated.",
+        "color": 0xE91E63,
+        "footer": {"text": _now_et()},
+    }
+    if new_avatar_url:
+        embed["image"] = {"url": new_avatar_url}
+    _post(ROBLOX_CHANNEL_ID, {"embeds": [embed]})
+
+
+def notify_missed_runs(minutes_gap: float):
+    missed = max(1, int(minutes_gap // 5) - 1)
+    _post(ERROR_CHANNEL_ID, {
+        "content": f"<@{PING_USER_ID}>",
+        "embeds": [{
+            "title": "⚠️ Tracker Was Down",
+            "description": (
+                f"The tracker was offline for **~{int(minutes_gap)} minutes** "
+                f"(~{missed} missed run{'s' if missed != 1 else ''}).\n"
+                "Tracking has resumed. Check [GitHub Actions]"
+                "(https://github.com/ToxinNozaki/activity-tracker/actions) for details."
+            ),
+            "color": 0xFF6600,
+            "footer": {"text": _now_et()},
+        }],
+    })
+
+
+def notify_roblox_api_down(details: str):
+    _post(ERROR_CHANNEL_ID, {"embeds": [{
+        "title": "🔴 Roblox API Appears Down",
+        "description": (
+            "Could not reach the Roblox API — this looks like a Roblox outage, "
+            "not a cookie issue. Tracking will resume automatically when the API recovers.\n\n"
+            f"**Details:** `{details}`"
+        ),
+        "color": 0xFF0000,
+        "footer": {"text": _now_et()},
+    }]})
+
+
+def notify_squad_changed(username: str, old_size: int | None, new_size: int,
+                         party_max: int | None):
+    cap = f"/{party_max}" if party_max else ""
+    if new_size == 1:
+        desc  = f"**{username}** is now playing **solo**."
+        color = 0x747F8D
+        title = "🎯 Playing Solo"
+    elif old_size is None or old_size == 1:
+        desc  = f"**{username}** joined a squad — **{new_size}{cap}** players."
+        color = 0x00B04F
+        title = "👥 Joined a Squad"
+    else:
+        desc  = f"**{username}**'s squad changed to **{new_size}{cap}** players."
+        color = 0x5865F2
+        title = "👥 Squad Changed"
+    _post(FORTNITE_CHANNEL_ID, {"embeds": [{
+        "title": title,
+        "description": desc,
+        "color": color,
+        "footer": {"text": _now_et()},
+    }]})
+
+
 def notify_startup():
     _post(STATUS_CHANNEL_ID, {"embeds": [{
         "title": "Activity Tracker Online",

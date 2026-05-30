@@ -14,14 +14,16 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 load_dotenv()
 
-from roblox_tracker import check_roblox_activity, CookieExpiredError, get_usernames_by_ids, get_user_thumbnails
-from cookie_updater import check_for_cookie_update
+from roblox_tracker import (check_roblox_activity, CookieExpiredError,
+                            get_usernames_by_ids, get_user_thumbnails, check_roblox_health)
+from cookie_updater import check_for_cookie_update, check_dm_commands
 from epic_tracker import check_epic_activity
 from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
     notify_cookie_expired, notify_status, notify_new_friends, notify_unfriended,
     notify_daily_summary, notify_weekly_games, notify_peak_hours,
-    notify_credential_invalid,
+    notify_credential_invalid, notify_server_hop, notify_avatar_changed,
+    notify_missed_runs, notify_roblox_api_down, notify_squad_changed,
 )
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -136,6 +138,18 @@ def main():
     state = load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # ── Auto-recovery: warn if we missed runs ────────────────────────────────
+    gap = minutes_since(state.get("last_run_ts"))
+    if gap > 15:
+        last_warn = state.get("last_recovery_warning_ts")
+        if not last_warn or minutes_since(last_warn) > 30:
+            notify_missed_runs(gap)
+            state["last_recovery_warning_ts"] = now_iso
+            logging.warning("Auto-recovery: %.0f minute gap detected", gap)
+
+    # ── Handle DM commands (status, etc.) ────────────────────────────────────
+    check_dm_commands(state)
+
     roblox_ok  = True
     epic_ok    = True
     roblox_msg = ""
@@ -168,6 +182,16 @@ def main():
             state["current_game"]       = None
             state["current_game_start"] = None
 
+        # ── Server hop detection ─────────────────────────────────────────────
+        current_game_id = roblox_data.get("game_id")
+        prev_game_id    = state.get("current_game_id")
+        if (current_game and current_game == prev_game   # same game
+                and current_game_id and prev_game_id     # both have server IDs
+                and current_game_id != prev_game_id):    # but different server
+            notify_server_hop(current_game, roblox_data.get("server_player_count"))
+            logging.info("Server hop detected in %s", current_game)
+        state["current_game_id"] = current_game_id
+
         if roblox_data.get("cookie_expired"):
             notify_cookie_expired()
             roblox_ok  = False
@@ -180,6 +204,19 @@ def main():
             notify_roblox(roblox_data, state.get("roblox"))
 
         state["roblox"] = roblox_data
+
+        # ── Avatar change detection ──────────────────────────────────────────
+        new_avatar = roblox_data.get("full_avatar_url")
+        prev_avatar = state.get("last_avatar_url")
+        if new_avatar and prev_avatar and new_avatar != prev_avatar:
+            notify_avatar_changed(
+                roblox_data.get("username", "Moonstar_dovetail"),
+                roblox_data.get("user_id", 2622410591),
+                new_avatar,
+            )
+            logging.info("Avatar change detected")
+        if new_avatar:
+            state["last_avatar_url"] = new_avatar
 
         # ── New friend detection ─────────────────────────────────────────────
         current_ids = set(roblox_data.get("all_friend_ids", []))
@@ -265,7 +302,12 @@ def main():
     except Exception as e:
         roblox_ok  = False
         roblox_msg = str(e)
-        notify_error("Roblox", "Unexpected error", str(e))
+        # Distinguish API outage from other errors
+        healthy, health_msg = check_roblox_health()
+        if not healthy:
+            notify_roblox_api_down(health_msg)
+        else:
+            notify_error("Roblox", "Unexpected error", str(e))
         logging.error("Roblox error: %s", e)
 
     # ── Epic / Fortnite ──────────────────────────────────────────────────────
@@ -298,6 +340,18 @@ def main():
         else:
             notify_epic(epic_data, state.get("epic"))
 
+            # ── Squad detection ──────────────────────────────────────────────
+            new_party = epic_data.get("party_size")
+            old_party = state.get("epic_party_size")
+            if ft_online and new_party is not None and new_party != old_party:
+                notify_squad_changed(
+                    epic_data.get("username", "ReesieLuvsChan"),
+                    old_party, new_party,
+                    epic_data.get("party_max"),
+                )
+                logging.info("Squad changed: %s → %s", old_party, new_party)
+            state["epic_party_size"] = new_party if ft_online else None
+
         state["epic"] = epic_data
 
     except Exception as e:
@@ -320,6 +374,7 @@ def main():
 
     state["last_roblox_ok"] = roblox_ok
     state["last_epic_ok"]   = epic_ok
+    state["last_run_ts"]    = now_iso   # used by auto-recovery on next run
 
     save_state(state)
     logging.info("Done.")

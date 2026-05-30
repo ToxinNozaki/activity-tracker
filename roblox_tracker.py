@@ -143,6 +143,45 @@ def get_server_player_count(universe_id: int, job_id: str) -> int | None:
     return None
 
 
+def get_full_avatar_url(user_id: int) -> str | None:
+    """
+    Full-body avatar thumbnail — URL hash changes whenever her outfit/accessories change.
+    Used for avatar change detection.
+    """
+    try:
+        r = requests.get(
+            f"https://thumbnails.roblox.com/v1/users/avatar"
+            f"?userIds={user_id}&size=420x420&format=Png&isCircular=false",
+            timeout=10,
+        )
+        if r.ok:
+            data = r.json().get("data", [])
+            if data and data[0].get("state") == "Completed":
+                return data[0].get("imageUrl")
+    except Exception:
+        pass
+    return None
+
+
+def check_roblox_health() -> tuple[bool, str]:
+    """
+    Hit a public (no-auth) Roblox endpoint to distinguish API outages from cookie issues.
+    Returns (is_healthy, detail_message).
+    """
+    try:
+        r = requests.get(
+            "https://games.roblox.com/v1/games?universeIds=1",
+            timeout=10,
+        )
+        if r.status_code < 500:
+            return True, "Roblox API is reachable"
+        return False, f"Roblox API returned HTTP {r.status_code}"
+    except requests.exceptions.Timeout:
+        return False, "Roblox API timed out"
+    except Exception as e:
+        return False, f"Roblox API unreachable: {e}"
+
+
 def get_user_thumbnails(user_ids: list[int]) -> dict:
     """Returns {user_id: image_url} for the given user IDs."""
     if not user_ids:
@@ -246,7 +285,8 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
         # Fetch avatars for active friends + tracked user in one call
         all_ids = list({user_id} | set(active_ids))
         thumbnail_map = get_user_thumbnails(all_ids)
-        result["avatar_url"] = thumbnail_map.get(user_id)
+        result["avatar_url"]      = thumbnail_map.get(user_id)
+        result["full_avatar_url"] = get_full_avatar_url(user_id)  # for avatar change detection
 
         result["friends_presence"] = [
             {
