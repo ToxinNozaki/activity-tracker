@@ -1,6 +1,12 @@
 import os
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_EASTERN = ZoneInfo("America/New_York")
+
+def _now_et() -> str:
+    return datetime.now(_EASTERN).strftime("%m/%d/%Y %I:%M %p %Z")
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 
@@ -34,9 +40,6 @@ def notify_roblox(data: dict, prev: dict | None = None):
     status   = data.get("status", "Unknown")
     username = data.get("username", "?")
     ts       = data.get("timestamp", "")
-
-    if prev and prev.get("status") == status and prev.get("game") == data.get("game"):
-        return
 
     fields = [{"name": "Status", "value": status, "inline": True}]
 
@@ -115,11 +118,6 @@ def notify_epic(data: dict, prev: dict | None = None):
     playing  = data.get("playing", False)
     ts       = data.get("timestamp", "")
 
-    if prev and (prev.get("online") == online and prev.get("playing") == playing
-                 and prev.get("game_mode") == data.get("game_mode")
-                 and prev.get("party_size") == data.get("party_size")):
-        return
-
     color = 0x00B04F if (online and playing) else (0x5865F2 if online else 0x747F8D)
     label = "In Game" if (online and playing) else ("Online" if online else "Offline")
 
@@ -157,7 +155,7 @@ def notify_cookie_expired():
                 " and update `ROBLOX_COOKIE`"
             ),
             "color": 0xFF0000,
-            "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+            "footer": {"text": _now_et()},
         }],
     })
 
@@ -167,7 +165,7 @@ def notify_error(source: str, message: str, details: str = ""):
         "title": f"Error — {source}",
         "description": message,
         "color": 0xFF0000,
-        "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+        "footer": {"text": _now_et()},
     }
     if details:
         embed["fields"] = [{"name": "Details", "value": details[:1000], "inline": False}]
@@ -183,7 +181,7 @@ def notify_status(roblox_ok: bool, epic_ok: bool,
         "title": "15-Minute Status Check",
         "description": f"**Roblox** — {r}\n**Fortnite** — {e}",
         "color": color,
-        "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+        "footer": {"text": _now_et()},
     }]})
 
 
@@ -196,5 +194,5 @@ def notify_startup():
             "Activity updates on change · Status check every 15 min"
         ),
         "color": 0x5865F2,
-        "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+        "footer": {"text": _now_et()},
     }]})

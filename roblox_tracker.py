@@ -1,6 +1,12 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_EASTERN = ZoneInfo("America/New_York")
+
+def _now_et() -> str:
+    return datetime.now(_EASTERN).strftime("%m/%d/%Y %I:%M %p %Z")
 
 COOKIE = os.environ.get("ROBLOX_COOKIE", "")
 
@@ -154,7 +160,7 @@ def get_user_thumbnails(user_ids: list[int]) -> dict:
 def check_roblox_activity(target_username: str, target_user_id: int | None = None) -> dict:
     result = {
         "username": target_username,
-        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "timestamp": _now_et(),
         "status": "Unknown",
         "game": None,
         "game_url": None,
