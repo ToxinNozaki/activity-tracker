@@ -27,7 +27,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests python-dotenv apscheduler pynacl websocket-client
+        run: pip install requests python-dotenv apscheduler pynacl
 
       # Restore .state.json and epic_auth.json from the previous run
       - name: Restore cached runtime files
@@ -57,7 +57,6 @@ jobs:
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           EPIC_AUTH_JSON: ${{ secrets.EPIC_AUTH_JSON }}
           GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
-          GH_TOKEN: ${{ github.token }}
         run: python run_once.py
 
       # Report any Python crash to Discord
@@ -91,5 +90,15 @@ jobs:
             epic_auth.json
           key: tracker-runtime-${{ github.run_number }}
 
-      # Next run is self-triggered from inside run_once.py (after a 285s sleep)
-      # so the bot stays online the whole window. The cron above is the fallback.
+      # Self-trigger next run via repository_dispatch (GITHUB_TOKEN allowed for this)
+      - name: Schedule next run in 5 minutes
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 290
+          curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{"event_type":"run-tracker"}'

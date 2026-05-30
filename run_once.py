@@ -5,9 +5,7 @@ Runs every 5 minutes. Sends Discord status check every 15 minutes.
 
 import os
 import json
-import time
 import logging
-import requests as _requests
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -23,11 +21,8 @@ from discord_notifier import (
     notify_cookie_expired, notify_status, notify_new_friends, notify_unfriended,
     notify_daily_summary, notify_weekly_games, notify_peak_hours,
 )
-from discord_gateway import DiscordPresence
 
 _EASTERN = ZoneInfo("America/New_York")
-_REPO    = "ToxinNozaki/activity-tracker"
-_SLEEP_BEFORE_NEXT_RUN = 285  # seconds — slightly under the 5-min window
 
 class _EasternFormatter(logging.Formatter):
     def formatTime(self, record, datefmt=None):
@@ -40,25 +35,6 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler])
 
 STATE_FILE = Path(".state.json")
 STATUS_INTERVAL_MINUTES = 15
-
-
-def _trigger_next_run():
-    """Fire a repository_dispatch so the next tracker run starts in ~5 minutes."""
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT", "")
-    if not token:
-        logging.warning("_trigger_next_run: no token available — next run depends on cron fallback")
-        return
-    try:
-        _requests.post(
-            f"https://api.github.com/repos/{_REPO}/dispatches",
-            headers={"Authorization": f"token {token}",
-                     "Accept": "application/vnd.github.v3+json"},
-            json={"event_type": "run-tracker"},
-            timeout=10,
-        )
-        logging.info("Triggered next tracker run via repository_dispatch")
-    except Exception as e:
-        logging.warning("Could not trigger next run: %s", e)
 
 
 def load_state() -> dict:
@@ -86,21 +62,6 @@ def minutes_since(ts_str: str | None) -> float:
 
 
 def main():
-    # Connect to Discord Gateway so the bot appears online
-    presence = DiscordPresence()
-    presence.connect()
-
-    try:
-        _main_work()
-    finally:
-        # Keep the bot online while we wait, then fire the next run
-        logging.info("Sleeping %ds before triggering next run...", _SLEEP_BEFORE_NEXT_RUN)
-        time.sleep(_SLEEP_BEFORE_NEXT_RUN)
-        _trigger_next_run()
-        presence.close()
-
-
-def _main_work():
     # Write epic_auth.json from secret if running in GitHub Actions and file missing
     epic_secret = os.environ.get("EPIC_AUTH_JSON", "")
     auth_file = Path("epic_auth.json")
