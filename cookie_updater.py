@@ -92,6 +92,30 @@ def _trigger_new_run():
         logging.warning("cookie_updater: could not trigger new run: %s", e)
 
 
+# ── Cookie validation ────────────────────────────────────────────────────────
+
+def _validate_cookie(cookie: str) -> tuple[bool, str]:
+    """
+    Test the cookie against Roblox's authenticated-user endpoint.
+    Returns (is_valid, username_or_error_message).
+    """
+    try:
+        r = requests.get(
+            "https://users.roblox.com/v1/users/authenticated",
+            cookies={".ROBLOSECURITY": cookie},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return True, data.get("name", "Unknown")
+        elif r.status_code == 401:
+            return False, "Cookie is invalid or expired (Roblox returned 401)"
+        else:
+            return False, f"Roblox returned unexpected status {r.status_code}"
+    except Exception as e:
+        return False, f"Could not reach Roblox to validate: {e}"
+
+
 # ── Cookie detection ─────────────────────────────────────────────────────────
 
 def _extract_cookie(content: str) -> str | None:
@@ -149,17 +173,36 @@ def check_for_cookie_update() -> bool:
         _d("DELETE", f"/channels/{dm_channel}/messages/{msg['id']}")
         logging.info("cookie_updater: cookie message detected and deleted")
 
+        # Validate the cookie against Roblox before saving
+        valid, result = _validate_cookie(cookie)
+        if not valid:
+            reply = (
+                f"❌ **Invalid cookie — not saved.**\n"
+                f"`{result}`\n\n"
+                "Make sure you copied the full `.ROBLOSECURITY` value "
+                "(it starts with `_|WARNING`) and that you're logged into Roblox when you grab it."
+            )
+            _d("POST", f"/channels/{dm_channel}/messages", json={"content": reply})
+            logging.warning("cookie_updater: cookie validation failed: %s", result)
+            return False
+
+        logging.info("cookie_updater: cookie validated — logged in as %s", result)
+
         ok = _update_github_secret("ROBLOX_COOKIE", cookie)
 
         if ok:
             _trigger_new_run()
-            reply = "✅ **Cookie updated!** Firing a new tracker run right now — it'll be back online in seconds."
+            reply = (
+                f"✅ **Cookie updated!** Logged in as **{result}**.\n"
+                "Firing a new tracker run right now — it'll be back online in ~30 seconds."
+            )
         else:
             reply = (
-                "❌ **Failed to update cookie.**\n"
+                "⚠️ **Cookie is valid** (logged in as **{result}**) "
+                "but **failed to save to GitHub Secrets.**\n"
                 "Make sure the `GITHUB_PAT` secret has `repo` scope "
                 "(Settings → Secrets → GITHUB_PAT)."
-            )
+            ).format(result=result)
 
         _d("POST", f"/channels/{dm_channel}/messages", json={"content": reply})
         logging.info("cookie_updater: secret update %s", "OK" if ok else "FAILED")
