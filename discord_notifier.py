@@ -23,12 +23,20 @@ def _post(channel_id: str, payload: dict):
     if not BOT_TOKEN:
         print("WARNING: DISCORD_BOT_TOKEN not set")
         return
-    requests.post(
-        f"{_API}/channels/{channel_id}/messages",
-        headers={"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"},
-        json=payload,
-        timeout=10,
-    )
+    try:
+        r = requests.post(
+            f"{_API}/channels/{channel_id}/messages",
+            headers={"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=10,
+        )
+        if not r.ok:
+            import logging
+            logging.warning("Discord API error %s posting to %s: %s",
+                            r.status_code, channel_id, r.text[:200])
+    except Exception as e:
+        import logging
+        logging.warning("Discord post failed: %s", e)
 
 
 def _roblox_color(status: str) -> int:
@@ -438,16 +446,19 @@ def notify_missed_runs(minutes_gap: float):
 
 
 def notify_roblox_api_down(details: str):
-    _post(ERROR_CHANNEL_ID, {"embeds": [{
-        "title": "🔴 Roblox API Appears Down",
-        "description": (
-            "Could not reach the Roblox API — this looks like a Roblox outage, "
-            "not a cookie issue. Tracking will resume automatically when the API recovers.\n\n"
-            f"**Details:** `{details}`"
-        ),
-        "color": 0xFF0000,
-        "footer": {"text": _now_et()},
-    }]})
+    _post(ERROR_CHANNEL_ID, {
+        "content": f"<@{PING_USER_ID}>",
+        "embeds": [{
+            "title": "🔴 Roblox API Appears Down",
+            "description": (
+                "Could not reach the Roblox API — this looks like a Roblox outage, "
+                "not a cookie issue. Tracking will resume automatically when the API recovers.\n\n"
+                f"**Details:** `{details}`"
+            ),
+            "color": 0xFF0000,
+            "footer": {"text": _now_et()},
+        }],
+    })
 
 
 def notify_squad_changed(username: str, old_size: int | None, new_size: int,

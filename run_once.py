@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 load_dotenv()
 
-from roblox_tracker import (check_roblox_activity, CookieExpiredError,
+from roblox_tracker import (check_roblox_activity,
                             get_usernames_by_ids, get_user_thumbnails, check_roblox_health)
 from cookie_updater import check_for_cookie_update, check_dm_commands
 from epic_tracker import check_epic_activity
@@ -132,20 +132,24 @@ def main():
     # Check for /setcookie DM command before anything else
     check_for_cookie_update()
 
-    # Validate all credentials — notify error channel if anything is broken
-    check_credentials()
-
     state = load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # ── Auto-recovery: warn if we missed runs ────────────────────────────────
-    gap = minutes_since(state.get("last_run_ts"))
-    if gap > 15:
-        last_warn = state.get("last_recovery_warning_ts")
-        if not last_warn or minutes_since(last_warn) > 30:
-            notify_missed_runs(gap)
-            state["last_recovery_warning_ts"] = now_iso
-            logging.warning("Auto-recovery: %.0f minute gap detected", gap)
+    # Guard: last_run_ts being None means this is the first ever run — skip
+    if state.get("last_run_ts"):
+        gap = minutes_since(state.get("last_run_ts"))
+        if gap > 15:
+            last_warn = state.get("last_recovery_warning_ts")
+            if not last_warn or minutes_since(last_warn) > 30:
+                notify_missed_runs(gap)
+                state["last_recovery_warning_ts"] = now_iso
+                logging.warning("Auto-recovery: %.0f minute gap detected", gap)
+
+    # ── Credential check — rate-limited to once per hour to avoid spam ───────
+    if minutes_since(state.get("last_credential_check_ts")) >= 60:
+        check_credentials()
+        state["last_credential_check_ts"] = now_iso
 
     # ── Handle DM commands (status, etc.) ────────────────────────────────────
     check_dm_commands(state)
@@ -170,10 +174,14 @@ def main():
 
         if current_game:
             if current_game == prev_game and game_start_ts:
-                start = datetime.fromisoformat(game_start_ts)
-                roblox_data["session_minutes"] = int(
-                    (datetime.now(timezone.utc) - start).total_seconds() / 60
-                )
+                try:
+                    start = datetime.fromisoformat(game_start_ts)
+                    roblox_data["session_minutes"] = int(
+                        (datetime.now(timezone.utc) - start).total_seconds() / 60
+                    )
+                except Exception:
+                    state["current_game_start"] = datetime.now(timezone.utc).isoformat()
+                    roblox_data["session_minutes"] = 0
             else:
                 state["current_game"]       = current_game
                 state["current_game_start"] = datetime.now(timezone.utc).isoformat()
@@ -321,10 +329,14 @@ def main():
 
         if ft_online:
             if ft_session_ts:
-                start = datetime.fromisoformat(ft_session_ts)
-                epic_data["session_minutes"] = int(
-                    (datetime.now(timezone.utc) - start).total_seconds() / 60
-                )
+                try:
+                    start = datetime.fromisoformat(ft_session_ts)
+                    epic_data["session_minutes"] = int(
+                        (datetime.now(timezone.utc) - start).total_seconds() / 60
+                    )
+                except Exception:
+                    state["fortnite_session_start"] = datetime.now(timezone.utc).isoformat()
+                    epic_data["session_minutes"] = 0
             else:
                 state["fortnite_session_start"] = datetime.now(timezone.utc).isoformat()
                 epic_data["session_minutes"] = 0

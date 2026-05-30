@@ -208,7 +208,7 @@ def check_dm_commands(state: dict) -> None:
     if not r.ok:
         return
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
 
     for msg in r.json():
         if str(msg.get("author", {}).get("id")) != AUTHORIZED_USER_ID:

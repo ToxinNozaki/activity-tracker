@@ -58,7 +58,7 @@ def get_access_token() -> tuple[str, str]:
     auth["refresh_token"] = session["refresh_token"]
     AUTH_FILE.write_text(json.dumps(auth, indent=2))
 
-    account_id = session.get("account_id") or session.get("accountId") or auth["accountId"]
+    account_id = session.get("account_id") or session.get("accountId") or auth.get("accountId")
     return session["access_token"], account_id
 
 
