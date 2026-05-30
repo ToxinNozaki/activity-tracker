@@ -74,6 +74,9 @@ def main():
     roblox_msg = ""
     epic_msg   = ""
 
+    prev_roblox_ok = state.get("last_roblox_ok", True)
+    prev_epic_ok   = state.get("last_epic_ok",   True)
+
     # ── Roblox ──────────────────────────────────────────────────────────────
     try:
         roblox_data = check_roblox_activity("Moonstar_dovetail", target_user_id=2622410591)
@@ -143,11 +146,20 @@ def main():
         notify_error("Fortnite", "Unexpected error", str(e))
         logging.error("Epic error: %s", e)
 
-    # ── 15-minute status check ───────────────────────────────────────────────
-    if minutes_since(state.get("last_status_ts")) >= STATUS_INTERVAL_MINUTES:
+    # ── Status updates ───────────────────────────────────────────────────────
+    status_changed = (roblox_ok != prev_roblox_ok) or (epic_ok != prev_epic_ok)
+    periodic_due   = minutes_since(state.get("last_status_ts")) >= STATUS_INTERVAL_MINUTES
+
+    if status_changed or periodic_due:
         notify_status(roblox_ok, epic_ok, roblox_msg, epic_msg)
         state["last_status_ts"] = now_iso
-        logging.info("Status check sent.")
+        if status_changed:
+            logging.info("Status CHANGED — posted immediately.")
+        else:
+            logging.info("15-minute status check sent.")
+
+    state["last_roblox_ok"] = roblox_ok
+    state["last_epic_ok"]   = epic_ok
 
     save_state(state)
     logging.info("Done.")
