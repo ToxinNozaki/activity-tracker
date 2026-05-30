@@ -31,9 +31,9 @@ def _roblox_color(status: str) -> int:
 
 
 def notify_roblox(data: dict, prev: dict | None = None):
-    status  = data.get("status", "Unknown")
+    status   = data.get("status", "Unknown")
     username = data.get("username", "?")
-    ts      = data.get("timestamp", "")
+    ts       = data.get("timestamp", "")
 
     if prev and prev.get("status") == status and prev.get("game") == data.get("game"):
         return
@@ -52,38 +52,54 @@ def notify_roblox(data: dict, prev: dict | None = None):
         fields.append({"name": "Total in Game",
                        "value": f"{data['total_playing']:,}", "inline": True})
 
-    # Friends — split into in-game vs just online
-    friends = data.get("friends_presence", [])
-    in_game  = [f for f in friends if f.get("status") == "In Game"]
-    online   = [f for f in friends if f.get("status") in ("Online (Website)",)]
-
-    if in_game:
-        lines = "\n".join(
-            f"• **{f['name']}** — {f.get('game') or 'In Game'}" for f in in_game[:15]
-        )
-        fields.append({"name": f"Friends In a Game ({len(in_game)})",
-                       "value": lines, "inline": False})
-    if online:
-        lines = "\n".join(f"• **{f['name']}**" for f in online[:10])
-        fields.append({"name": f"Friends Online ({len(online)})",
-                       "value": lines, "inline": False})
-
     if data.get("error"):
         fields.append({"name": "Warning", "value": data["error"], "inline": False})
 
-    embed = {
+    friends = data.get("friends_presence", [])
+    in_game = [f for f in friends if f.get("status") == "In Game"]
+    online  = [f for f in friends if f.get("status") in ("Online (Website)",)]
+
+    # Show counts in main embed so the header is visible even if friends scroll offscreen
+    if in_game:
+        fields.append({"name": f"Friends In a Game ({len(in_game)})",
+                       "value": " ".join(f"**{f['name']}**" for f in in_game[:20]) or "—",
+                       "inline": False})
+    if online:
+        fields.append({"name": f"Friends Online ({len(online)})",
+                       "value": " ".join(f"**{f['name']}**" for f in online[:10]) or "—",
+                       "inline": False})
+
+    main_embed = {
         "title": f"Roblox — {username}",
         "color": _roblox_color(status),
         "fields": fields,
         "footer": {"text": f"Logged at {ts}"},
     }
-    if data.get("user_id"):
-        embed["thumbnail"] = {
-            "url": f"https://www.roblox.com/headshot-thumbnail/image"
-                   f"?userId={data['user_id']}&width=150&height=150&format=png"
+    if data.get("avatar_url"):
+        main_embed["thumbnail"] = {"url": data["avatar_url"]}
+    elif data.get("user_id"):
+        main_embed["thumbnail"] = {
+            "url": f"https://thumbnails.roblox.com/v1/users/avatar-headshot"
+                   f"?userIds={data['user_id']}&size=150x150&format=Png"
         }
 
-    _post(ROBLOX_CHANNEL_ID, {"embeds": [embed]})
+    embeds = [main_embed]
+
+    # One mini-embed per friend (up to 9, Discord max is 10 total)
+    shown = (in_game[:5] + online[:4])[:9]
+    for f in shown:
+        profile_url = f"https://www.roblox.com/users/{f['user_id']}/profile" if f.get("user_id") else None
+        friend_embed = {
+            "color": 0x00B04F if f.get("status") == "In Game" else 0x5865F2,
+            "author": {
+                "name": f"{f['name']} — {f.get('game') or f.get('status', 'Online')}",
+                **({"url": profile_url} if profile_url else {}),
+                **({"icon_url": f["avatar_url"]} if f.get("avatar_url") else {}),
+            },
+        }
+        embeds.append(friend_embed)
+
+    _post(ROBLOX_CHANNEL_ID, {"embeds": embeds})
 
 
 def notify_epic(data: dict, prev: dict | None = None):
