@@ -1,7 +1,13 @@
+# Credentials — never commit these
 .env
 epic_auth.json
 device_auth.json
+setup_epic.py
+
+# Runtime state
 logs/
 .state.json
+
+# Python cache
 __pycache__/
 *.pyc
