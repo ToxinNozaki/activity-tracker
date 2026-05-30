@@ -8,18 +8,28 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from roblox_tracker import check_roblox_activity, CookieExpiredError
+from roblox_tracker import check_roblox_activity, CookieExpiredError, get_usernames_by_ids, get_user_thumbnails
 from epic_tracker import check_epic_activity
 from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
-    notify_cookie_expired, notify_status,
+    notify_cookie_expired, notify_status, notify_new_friends,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+_EASTERN = ZoneInfo("America/New_York")
+
+class _EasternFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        ct = datetime.fromtimestamp(record.created, _EASTERN)
+        return ct.strftime(datefmt or "%m/%d/%Y %I:%M:%S %p %Z")
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_EasternFormatter("%(asctime)s %(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 
 STATE_FILE = Path(".state.json")
 STATUS_INTERVAL_MINUTES = 15
@@ -81,6 +91,29 @@ def main():
             notify_roblox(roblox_data, state.get("roblox"))
 
         state["roblox"] = roblox_data
+
+        # ── New friend detection ─────────────────────────────────────────────
+        current_ids = set(roblox_data.get("all_friend_ids", []))
+        prev_ids    = set(state.get("roblox_friend_ids", []))
+
+        if prev_ids and current_ids:  # skip first-ever run (no baseline yet)
+            new_ids = current_ids - prev_ids
+            if new_ids:
+                name_map   = get_usernames_by_ids(list(new_ids))
+                thumb_map  = get_user_thumbnails(list(new_ids))
+                new_friends = [
+                    {
+                        "user_id":    uid,
+                        "name":       name_map.get(uid, f"User#{uid}"),
+                        "avatar_url": thumb_map.get(uid),
+                    }
+                    for uid in new_ids
+                ]
+                notify_new_friends(new_friends)
+                logging.info("New friends detected: %s", [f["name"] for f in new_friends])
+
+        if current_ids:
+            state["roblox_friend_ids"] = list(current_ids)
 
     except Exception as e:
         roblox_ok  = False

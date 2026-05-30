@@ -9,6 +9,12 @@ import base64
 import requests
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+_EASTERN = ZoneInfo("America/New_York")
+
+def _now_et() -> str:
+    return datetime.now(_EASTERN).strftime("%m/%d/%Y %I:%M %p %Z")
 
 _CLIENT_ID = "34a02cf8f4414e29b15921876da36f9a"
 _CLIENT_SECRET = "daafbccc737745039dffe53d94fc76cf"
@@ -114,7 +120,7 @@ def parse_fortnite_status(presence: dict) -> dict:
 def check_epic_activity(target_display_name: str) -> dict:
     result = {
         "username": target_display_name,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": _now_et(),
         "online": False,
         "playing": False,
         "game_mode": None,

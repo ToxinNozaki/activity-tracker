@@ -167,6 +167,7 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
         "server_player_count": None,
         "total_playing": None,
         "friends_presence": [],
+        "all_friend_ids": [],
         "error": None,
         "cookie_expired": False,
     }
@@ -213,6 +214,7 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
         # Her friends' presences
         friends = get_friends_list(user_id)
         friend_ids = [f["id"] for f in friends] if friends else []
+        result["all_friend_ids"] = friend_ids
 
         # Batch in chunks of 50 (presence API limit)
         friend_presences = []

@@ -141,6 +141,26 @@ def notify_epic(data: dict, prev: dict | None = None):
     }]})
 
 
+def notify_new_friends(new_friends: list[dict]):
+    """Posts to Roblox channel when Moonstar_dovetail gets new friends."""
+    embeds = []
+    for f in new_friends:
+        uid = f.get("user_id")
+        name = f.get("name", "Unknown")
+        profile_url = f"https://www.roblox.com/users/{uid}/profile" if uid else None
+        embed = {
+            "title": "New Friend Added",
+            "description": f"**[{name}]({profile_url})**" if profile_url else f"**{name}**",
+            "color": 0x5865F2,
+            "footer": {"text": _now_et()},
+        }
+        if f.get("avatar_url"):
+            embed["thumbnail"] = {"url": f["avatar_url"]}
+        embeds.append(embed)
+    if embeds:
+        _post(ROBLOX_CHANNEL_ID, {"embeds": embeds})
+
+
 def notify_cookie_expired():
     _post(ERROR_CHANNEL_ID, {
         "content": f"<@{PING_USER_ID}>",
