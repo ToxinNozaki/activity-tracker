@@ -2,8 +2,12 @@ name: Activity Tracker
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes
-  workflow_dispatch:          # lets you trigger it manually from GitHub too
+    - cron: '*/5 * * * *'   # fallback in case the self-trigger chain breaks
+  workflow_dispatch:
+
+concurrency:
+  group: tracker
+  cancel-in-progress: false  # queue instead of cancelling; prevents double-posts
 
 jobs:
   track:
@@ -58,3 +62,13 @@ jobs:
             .state.json
             epic_auth.json
           key: tracker-runtime-${{ github.run_number }}
+
+      # Self-trigger the next run ~5 minutes from now.
+      # This is far more reliable than GitHub's cron scheduler for frequent jobs.
+      - name: Schedule next run in 5 minutes
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 290
+          gh workflow run tracker.yml --ref main
