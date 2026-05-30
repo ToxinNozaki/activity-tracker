@@ -176,4 +176,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        logging.critical("FATAL: %s", traceback.format_exc())
+        try:
+            notify_error("Tracker", "Fatal unhandled exception", traceback.format_exc()[-1000:])
+        except Exception:
+            pass
+        raise
