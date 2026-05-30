@@ -17,7 +17,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
-COMMANDS_CHANNEL_ID = "1510238957684654220"
+COMMANDS_CHANNEL_ID = "1510249219087401060"
 BOT_TOKEN           = os.environ.get("DISCORD_BOT_TOKEN", "")
 GITHUB_PAT          = os.environ.get("GITHUB_PAT", "")
 GH_TOKEN            = os.environ.get("GH_TOKEN", "")
@@ -41,12 +41,14 @@ def _d(method: str, path: str, **kwargs):
     )
 
 
-def _reply(content: str = "", embeds: list | None = None):
+def _reply(content: str = "", embeds: list | None = None, reply_to: str | None = None):
     payload: dict = {}
     if content:
         payload["content"] = content
     if embeds:
         payload["embeds"] = embeds
+    if reply_to:
+        payload["message_reference"] = {"message_id": reply_to}
     r = _d("POST", f"/channels/{COMMANDS_CHANNEL_ID}/messages", json=payload)
     if not r.ok:
         logging.warning("bot_commands: reply failed %s: %s", r.status_code, r.text[:200])
@@ -99,7 +101,7 @@ def _fmt_session(minutes: int | None) -> str:
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
-def _handle_restart(state: dict):
+def _handle_restart(state: dict, reply_to: str | None = None):
     ok = _trigger_run()
     # Reset the last_run_ts so auto-recovery doesn't fire after the forced restart
     if ok:
@@ -112,7 +114,7 @@ def _handle_restart(state: dict):
             ),
             "color": 0x00B04F,
             "footer": {"text": datetime.now(_ET).strftime("%m/%d/%Y %I:%M %p %Z")},
-        }])
+        }], reply_to=reply_to)
         logging.info("bot_commands: /restart — new run triggered")
     else:
         _reply(embeds=[{
@@ -123,10 +125,10 @@ def _handle_restart(state: dict):
             ),
             "color": 0xFF0000,
             "footer": {"text": datetime.now(_ET).strftime("%m/%d/%Y %I:%M %p %Z")},
-        }])
+        }], reply_to=reply_to)
 
 
-def _handle_status(state: dict):
+def _handle_status(state: dict, reply_to: str | None = None):
     last_run = _fmt_ago(state.get("last_run_ts"))
 
     # Roblox
@@ -165,10 +167,10 @@ def _handle_status(state: dict):
         ],
         "color": color,
         "footer": {"text": datetime.now(_ET).strftime("%m/%d/%Y %I:%M %p %Z")},
-    }])
+    }], reply_to=reply_to)
 
 
-def _handle_help():
+def _handle_help(reply_to: str | None = None):
     _reply(embeds=[{
         "title": "🤖 Bot Commands",
         "description": (
@@ -179,7 +181,7 @@ def _handle_help():
         ),
         "color": 0x5865F2,
         "footer": {"text": datetime.now(_ET).strftime("%m/%d/%Y %I:%M %p %Z")},
-    }])
+    }], reply_to=reply_to)
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -230,17 +232,17 @@ def check_server_commands(state: dict) -> None:
 
         if content == "restart":
             state[_LAST_CMD_ID] = msg_id
-            _handle_restart(state)
+            _handle_restart(state, reply_to=msg_id)
             logging.info("bot_commands: handled /restart")
             return
         elif content == "status":
             state[_LAST_CMD_ID] = msg_id
-            _handle_status(state)
+            _handle_status(state, reply_to=msg_id)
             logging.info("bot_commands: handled /status")
             return
         elif content == "help":
             state[_LAST_CMD_ID] = msg_id
-            _handle_help()
+            _handle_help(reply_to=msg_id)
             logging.info("bot_commands: handled /help")
             return
 
