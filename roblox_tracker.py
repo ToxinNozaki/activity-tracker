@@ -120,25 +120,26 @@ def get_game_stats(universe_id: int) -> dict:
 
 
 def get_server_player_count(universe_id: int, job_id: str) -> int | None:
-    """Find her specific server by paginating public server list."""
-    cursor = ""
-    for _ in range(10):  # up to 1000 servers
-        try:
-            url = (f"https://games.roblox.com/v1/games/{universe_id}"
-                   f"/servers/Public?limit=100&sortOrder=Asc"
-                   + (f"&cursor={cursor}" if cursor else ""))
-            resp = requests.get(url, headers=_headers(), timeout=10)
-            if not resp.ok:
+    """Find her specific server. Checks Public then Friends (private/VIP) servers."""
+    for server_type in ("Public", "Friends"):
+        cursor = ""
+        for _ in range(10):  # up to 1000 servers per type
+            try:
+                url = (f"https://games.roblox.com/v1/games/{universe_id}"
+                       f"/servers/{server_type}?limit=100&sortOrder=Asc"
+                       + (f"&cursor={cursor}" if cursor else ""))
+                resp = requests.get(url, headers=_headers(), timeout=10)
+                if not resp.ok:
+                    break
+                body = resp.json()
+                for server in body.get("data", []):
+                    if server.get("id") == job_id:
+                        return server.get("playing")
+                cursor = body.get("nextPageCursor") or ""
+                if not cursor:
+                    break
+            except Exception:
                 break
-            body = resp.json()
-            for server in body.get("data", []):
-                if server.get("id") == job_id:
-                    return server.get("playing")
-            cursor = body.get("nextPageCursor") or ""
-            if not cursor:
-                break
-        except Exception:
-            break
     return None
 
 
