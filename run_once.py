@@ -6,6 +6,7 @@ Runs every 5 minutes. Sends Discord status check every 15 minutes.
 import os
 import json
 import logging
+import requests as _requests
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -20,6 +21,7 @@ from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
     notify_cookie_expired, notify_status, notify_new_friends, notify_unfriended,
     notify_daily_summary, notify_weekly_games, notify_peak_hours,
+    notify_credential_invalid,
 )
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -35,6 +37,63 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler])
 
 STATE_FILE = Path(".state.json")
 STATUS_INTERVAL_MINUTES = 15
+
+
+def check_credentials():
+    """
+    Validate each secret/token against its respective API.
+    Posts a pinged error embed for any that are invalid.
+    """
+    _DISCORD_API = "https://discord.com/api/v10"
+    _GITHUB_API  = "https://api.github.com"
+
+    bot_token  = os.environ.get("DISCORD_BOT_TOKEN", "")
+    github_pat = os.environ.get("GITHUB_PAT", "")
+
+    # ── Discord bot token ────────────────────────────────────────────────────
+    if bot_token:
+        try:
+            r = _requests.get(
+                f"{_DISCORD_API}/users/@me",
+                headers={"Authorization": f"Bot {bot_token}"},
+                timeout=10,
+            )
+            if r.status_code == 401:
+                logging.error("Credential check: Discord Bot Token is INVALID")
+                # Bot token is broken so we can't DM — this will surface in
+                # the GitHub Actions failure notification instead.
+            else:
+                logging.info("Credential check: Discord Bot Token OK")
+        except Exception as e:
+            logging.warning("Credential check: Discord Bot Token unreachable: %s", e)
+    else:
+        logging.warning("Credential check: DISCORD_BOT_TOKEN not set")
+
+    # ── GitHub PAT ───────────────────────────────────────────────────────────
+    if github_pat:
+        try:
+            r = _requests.get(
+                f"{_GITHUB_API}/user",
+                headers={"Authorization": f"token {github_pat}",
+                         "Accept": "application/vnd.github.v3+json"},
+                timeout=10,
+            )
+            if r.status_code == 401:
+                logging.error("Credential check: GitHub PAT is INVALID")
+                notify_credential_invalid(
+                    "GitHub PAT",
+                    "Generate a new token with `repo` scope at "
+                    "[GitHub → Settings → Developer Settings → Personal Access Tokens]"
+                    "(https://github.com/settings/tokens), "
+                    "then update the `GITHUB_PAT` secret at "
+                    "https://github.com/ToxinNozaki/activity-tracker/settings/secrets/actions"
+                )
+            else:
+                logging.info("Credential check: GitHub PAT OK")
+        except Exception as e:
+            logging.warning("Credential check: GitHub PAT unreachable: %s", e)
+    else:
+        logging.warning("Credential check: GITHUB_PAT not set")
 
 
 def load_state() -> dict:
@@ -70,6 +129,9 @@ def main():
 
     # Check for /setcookie DM command before anything else
     check_for_cookie_update()
+
+    # Validate all credentials — notify error channel if anything is broken
+    check_credentials()
 
     state = load_state()
     now_iso = datetime.now(timezone.utc).isoformat()

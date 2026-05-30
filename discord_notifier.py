@@ -240,6 +240,27 @@ def notify_error(source: str, message: str, details: str = ""):
     _post(ERROR_CHANNEL_ID, {"embeds": [embed]})
 
 
+def notify_credential_invalid(name: str, fix: str):
+    """
+    Ping the user in the error channel when a specific credential stops working.
+    `name` — human-readable name shown in the title (e.g. "Discord Bot Token")
+    `fix`  — one-line fix instruction shown in the embed
+    """
+    _post(ERROR_CHANNEL_ID, {
+        "content": f"<@{PING_USER_ID}>",
+        "embeds": [{
+            "title": f"🔑 Credential Invalid — {name}",
+            "description": (
+                f"**{name}** is no longer working. "
+                "Tracking may be degraded until it's fixed.\n\n"
+                f"**Fix:** {fix}"
+            ),
+            "color": 0xFF6600,
+            "footer": {"text": _now_et()},
+        }],
+    })
+
+
 def notify_status(roblox_ok: bool, epic_ok: bool,
                   roblox_msg: str = "", epic_msg: str = ""):
     r = "✅ Connected" if roblox_ok else f"❌ {roblox_msg}"
