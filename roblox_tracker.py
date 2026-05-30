@@ -63,6 +63,24 @@ def get_friends_list(user_id: int) -> list[dict]:
     return resp.json().get("data", [])
 
 
+def get_usernames_by_ids(user_ids: list[int]) -> dict:
+    """Returns {user_id: username} by querying the users API directly."""
+    if not user_ids:
+        return {}
+    try:
+        resp = requests.post(
+            "https://users.roblox.com/v1/users",
+            json={"userIds": user_ids, "excludeBannedUsers": False},
+            headers=_headers(), timeout=10,
+        )
+        if resp.ok:
+            return {item["id"]: item.get("name", f"User#{item['id']}")
+                    for item in resp.json().get("data", [])}
+    except Exception:
+        pass
+    return {}
+
+
 def get_game_details(place_id: int) -> dict:
     resp = requests.get(
         f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={place_id}",
@@ -188,40 +206,42 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
 
         # Her friends' presences
         friends = get_friends_list(user_id)
-        if friends:
-            friend_ids = [f["id"] for f in friends]
-            friend_map = {f["id"]: f.get("name") or f.get("displayName", "Unknown") for f in friends}
+        friend_ids = [f["id"] for f in friends] if friends else []
 
-            # Batch in chunks of 50 (API limit)
-            friend_presences = []
-            for i in range(0, len(friend_ids), 50):
-                chunk = friend_ids[i:i+50]
-                try:
-                    friend_presences.extend(get_presence(chunk))
-                except Exception:
-                    pass
+        # Batch in chunks of 50 (presence API limit)
+        friend_presences = []
+        for i in range(0, len(friend_ids), 50):
+            chunk = friend_ids[i:i+50]
+            try:
+                friend_presences.extend(get_presence(chunk))
+            except Exception:
+                pass
 
-            active = [p for p in friend_presences if p.get("userPresenceType", 0) in (1, 2)]
-            active_ids = [p["userId"] for p in active if p.get("userId")]
+        active = [p for p in friend_presences if p.get("userPresenceType", 0) in (1, 2)]
+        active_ids = [p["userId"] for p in active if p.get("userId")]
 
-            # Fetch avatars for active friends + tracked user in one call
-            all_ids = list({user_id} | set(active_ids))
-            thumbnail_map = get_user_thumbnails(all_ids)
-            result["avatar_url"] = thumbnail_map.get(user_id)
+        # Look up usernames directly from user IDs — avoids any field-name ambiguity
+        name_map = get_usernames_by_ids(active_ids)
+        # Fallback: names from the friends list response
+        fallback_map = {f["id"]: f.get("name") or f.get("displayName", "") for f in friends}
 
-            result["friends_presence"] = [
-                {
-                    "user_id":    p.get("userId"),
-                    "name":       friend_map.get(p.get("userId"), f"User#{p.get('userId')}"),
-                    "status":     PRESENCE_TYPES.get(p.get("userPresenceType", 0), "Offline"),
-                    "game":       p.get("lastLocation") if p.get("userPresenceType") == 2 else None,
-                    "avatar_url": thumbnail_map.get(p.get("userId")),
-                }
-                for p in active
-            ]
-        else:
-            thumbnail_map = get_user_thumbnails([user_id])
-            result["avatar_url"] = thumbnail_map.get(user_id)
+        # Fetch avatars for active friends + tracked user in one call
+        all_ids = list({user_id} | set(active_ids))
+        thumbnail_map = get_user_thumbnails(all_ids)
+        result["avatar_url"] = thumbnail_map.get(user_id)
+
+        result["friends_presence"] = [
+            {
+                "user_id":    p.get("userId"),
+                "name":       (name_map.get(p.get("userId"))
+                               or fallback_map.get(p.get("userId"))
+                               or f"User#{p.get('userId')}"),
+                "status":     PRESENCE_TYPES.get(p.get("userPresenceType", 0), "Offline"),
+                "game":       p.get("lastLocation") if p.get("userPresenceType") == 2 else None,
+                "avatar_url": thumbnail_map.get(p.get("userId")),
+            }
+            for p in active
+        ]
 
     except CookieExpiredError:
         result["cookie_expired"] = True
