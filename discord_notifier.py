@@ -39,6 +39,27 @@ def _post(channel_id: str, payload: dict):
         logging.warning("Discord post failed: %s", e)
 
 
+def _fmt_last_seen(ts_str: str | None) -> str | None:
+    """Return a human-readable 'X ago' string from an ISO timestamp, or None."""
+    if not ts_str:
+        return None
+    try:
+        from datetime import timezone as _tz
+        past = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        mins = (datetime.now(_tz.utc) - past).total_seconds() / 60
+        if mins < 1:
+            return "Just now"
+        if mins < 60:
+            return f"{int(mins)}m ago"
+        h, m = divmod(int(mins), 60)
+        if mins < 1440:
+            return f"{h}h {m}m ago" if m else f"{h}h ago"
+        days = int(mins // 1440)
+        return f"{days}d ago"
+    except Exception:
+        return None
+
+
 def _roblox_color(status: str) -> int:
     return {"In Game": 0x00B04F, "Online (Website)": 0x5865F2,
             "In Studio": 0xFFA500, "Offline": 0x747F8D}.get(status, 0x747F8D)
@@ -65,6 +86,11 @@ def notify_roblox(data: dict, prev: dict | None = None):
         h, rem = divmod(m, 60)
         dur = f"{h}h {rem}m" if (h and rem) else (f"{h}h" if h else (f"{m}m" if m else "< 1 min"))
         fields.append({"name": "Session", "value": dur, "inline": True})
+
+    if status == "Offline":
+        last_seen = _fmt_last_seen(data.get("last_seen_ts"))
+        if last_seen:
+            fields.append({"name": "Last Seen", "value": last_seen, "inline": True})
 
     if data.get("error"):
         fields.append({"name": "Warning", "value": data["error"], "inline": False})
@@ -170,6 +196,11 @@ def notify_epic(data: dict, prev: dict | None = None):
         h, rem = divmod(m, 60)
         dur = f"{h}h {rem}m" if (h and rem) else (f"{h}h" if h else (f"{m}m" if m else "< 1 min"))
         fields.append({"name": "Session", "value": dur, "inline": True})
+
+    if not online:
+        last_seen = _fmt_last_seen(data.get("last_seen_ts"))
+        if last_seen:
+            fields.append({"name": "Last Seen", "value": last_seen, "inline": True})
 
     if data.get("status_text"):
         fields.append({"name": "Full Status", "value": data["status_text"], "inline": False})

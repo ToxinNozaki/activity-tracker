@@ -16,7 +16,8 @@ load_dotenv()
 
 from roblox_tracker import (check_roblox_activity,
                             get_usernames_by_ids, get_user_thumbnails, check_roblox_health)
-from cookie_updater import check_for_cookie_update, check_dm_commands
+from cookie_updater import check_for_cookie_update
+from bot_commands import check_server_commands
 from epic_tracker import check_epic_activity
 from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
@@ -151,8 +152,8 @@ def main():
         check_credentials()
         state["last_credential_check_ts"] = now_iso
 
-    # ── Handle DM commands (status, etc.) ────────────────────────────────────
-    check_dm_commands(state)
+    # ── Handle server channel commands (/restart, /status, /help) ───────────
+    check_server_commands(state)
 
     roblox_ok  = True
     epic_ok    = True
@@ -199,6 +200,11 @@ def main():
             notify_server_hop(current_game, roblox_data.get("server_player_count"))
             logging.info("Server hop detected in %s", current_game)
         state["current_game_id"] = current_game_id
+
+        # ── Last seen tracking ───────────────────────────────────────────────
+        if roblox_data.get("status") not in ("Offline", "Unknown", None):
+            state["last_roblox_online_ts"] = now_iso
+        roblox_data["last_seen_ts"] = state.get("last_roblox_online_ts")
 
         if roblox_data.get("cookie_expired"):
             notify_cookie_expired()
@@ -342,6 +348,11 @@ def main():
                 epic_data["session_minutes"] = 0
         else:
             state["fortnite_session_start"] = None
+
+        # ── Last seen tracking ───────────────────────────────────────────────
+        if ft_online:
+            state["last_epic_online_ts"] = now_iso
+        epic_data["last_seen_ts"] = state.get("last_epic_online_ts")
 
         if epic_data.get("error"):
             epic_ok  = False
