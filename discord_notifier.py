@@ -138,24 +138,59 @@ def notify_epic(data: dict, prev: dict | None = None):
     }]})
 
 
+def _friend_embed(f: dict, color: int) -> dict:
+    """Builds a mini-embed for one friend with their avatar icon and clickable profile link."""
+    uid = f.get("user_id")
+    name = f.get("name", "Unknown")
+    profile_url = f"https://www.roblox.com/users/{uid}/profile" if uid else None
+    embed = {"color": color}
+    author: dict = {"name": name}
+    if profile_url:
+        author["url"] = profile_url
+    if f.get("avatar_url"):
+        author["icon_url"] = f["avatar_url"]
+    embed["author"] = author
+    if f.get("avatar_url"):
+        embed["thumbnail"] = {"url": f["avatar_url"]}
+    return embed
+
+
 def notify_new_friends(new_friends: list[dict]):
-    """Posts to Roblox channel when Moonstar_dovetail gets new friends."""
-    embeds = []
-    for f in new_friends:
-        uid = f.get("user_id")
-        name = f.get("name", "Unknown")
-        profile_url = f"https://www.roblox.com/users/{uid}/profile" if uid else None
-        embed = {
-            "title": "New Friend Added",
-            "description": f"**[{name}]({profile_url})**" if profile_url else f"**{name}**",
-            "color": 0x5865F2,
-            "footer": {"text": _now_et()},
-        }
-        if f.get("avatar_url"):
-            embed["thumbnail"] = {"url": f["avatar_url"]}
-        embeds.append(embed)
-    if embeds:
-        _post(ROBLOX_CHANNEL_ID, {"embeds": embeds})
+    if not new_friends:
+        return
+    label = "New Friend Added" if len(new_friends) == 1 else f"{len(new_friends)} New Friends Added"
+    names = ", ".join(
+        f"[{f.get('name', '?')}](https://www.roblox.com/users/{f['user_id']}/profile)"
+        if f.get("user_id") else f.get("name", "?")
+        for f in new_friends
+    )
+    header = {
+        "title": label,
+        "description": names,
+        "color": 0x00B04F,
+        "footer": {"text": _now_et()},
+    }
+    embeds = [header] + [_friend_embed(f, 0x00B04F) for f in new_friends[:9]]
+    _post(ROBLOX_CHANNEL_ID, {"embeds": embeds})
+
+
+def notify_unfriended(removed_friends: list[dict]):
+    if not removed_friends:
+        return
+    label = "Friend Removed" if len(removed_friends) == 1 else f"{len(removed_friends)} Friends Removed"
+    names = ", ".join(
+        f"[{f.get('name', '?')}](https://www.roblox.com/users/{f['user_id']}/profile)"
+        if f.get("user_id") else f.get("name", "?")
+        for f in removed_friends
+    )
+    header = {
+        "title": label,
+        "description": names,
+        "color": 0xFF4444,
+        "footer": {"text": _now_et()},
+    }
+    embeds = [header] + [_friend_embed(f, 0xFF4444) for f in removed_friends[:9]]
+    _post(ROBLOX_CHANNEL_ID, {"embeds": embeds})
 
 
 def notify_cookie_expired():

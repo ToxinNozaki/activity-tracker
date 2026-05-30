@@ -17,7 +17,7 @@ from roblox_tracker import check_roblox_activity, CookieExpiredError, get_userna
 from epic_tracker import check_epic_activity
 from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
-    notify_cookie_expired, notify_status, notify_new_friends,
+    notify_cookie_expired, notify_status, notify_new_friends, notify_unfriended,
 )
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -100,20 +100,30 @@ def main():
         prev_ids    = set(state.get("roblox_friend_ids", []))
 
         if prev_ids and current_ids:  # skip first-ever run (no baseline yet)
-            new_ids = current_ids - prev_ids
-            if new_ids:
-                name_map   = get_usernames_by_ids(list(new_ids))
-                thumb_map  = get_user_thumbnails(list(new_ids))
-                new_friends = [
-                    {
+            new_ids     = current_ids - prev_ids
+            removed_ids = prev_ids - current_ids
+
+            if new_ids or removed_ids:
+                all_changed = list(new_ids | removed_ids)
+                name_map  = get_usernames_by_ids(all_changed)
+                thumb_map = get_user_thumbnails(all_changed)
+
+                def _build(uid):
+                    return {
                         "user_id":    uid,
                         "name":       name_map.get(uid, f"User#{uid}"),
                         "avatar_url": thumb_map.get(uid),
                     }
-                    for uid in new_ids
-                ]
-                notify_new_friends(new_friends)
-                logging.info("New friends detected: %s", [f["name"] for f in new_friends])
+
+                if new_ids:
+                    new_friends = [_build(uid) for uid in new_ids]
+                    notify_new_friends(new_friends)
+                    logging.info("New friends: %s", [f["name"] for f in new_friends])
+
+                if removed_ids:
+                    removed = [_build(uid) for uid in removed_ids]
+                    notify_unfriended(removed)
+                    logging.info("Unfriended: %s", [f["name"] for f in removed])
 
         if current_ids:
             state["roblox_friend_ids"] = list(current_ids)
