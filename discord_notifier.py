@@ -131,6 +131,13 @@ def notify_epic(data: dict, prev: dict | None = None):
         fields.append({"name": "Party",
                        "value": f"{data['party_size']} / {data.get('party_max') or '?'}",
                        "inline": True})
+
+    if data.get("session_minutes") is not None and online:
+        m = data["session_minutes"]
+        h, rem = divmod(m, 60)
+        dur = f"{h}h {rem}m" if (h and rem) else (f"{h}h" if h else (f"{m}m" if m else "< 1 min"))
+        fields.append({"name": "Session", "value": dur, "inline": True})
+
     if data.get("status_text"):
         fields.append({"name": "Full Status", "value": data["status_text"], "inline": False})
     if data.get("error"):
@@ -296,6 +303,47 @@ def notify_weekly_games(game_stats: dict):
         "title":       "🏆 Weekly Most Played Games",
         "description": lines,
         "color":       0xFFD700,
+        "footer":      {"text": _now_et()},
+    }]})
+
+
+def notify_peak_hours(hourly: dict):
+    """Posts a 24-hour bar chart of activity by hour (ET)."""
+    if not hourly:
+        return
+    data    = {int(k): v for k, v in hourly.items()}
+    max_val = max(data.values(), default=1) or 1
+
+    # Build bar chart
+    lines = []
+    peak_hour, peak_mins = max(data.items(), key=lambda x: x[1], default=(0, 0))
+    for h in range(24):
+        mins   = data.get(h, 0)
+        filled = round(mins / max_val * 10)
+        bar    = "█" * filled + "░" * (10 - filled)
+        label  = f"{h % 12 or 12} {'AM' if h < 12 else 'PM':>2}"
+        marker = " ◄ peak" if h == peak_hour and peak_mins > 0 else ""
+        lines.append(f"`{label}` {bar} {mins}m{marker}")
+
+    # Group totals
+    def _grp(start, end):
+        return sum(data.get(h, 0) for h in range(start, end))
+
+    fields = [
+        {"name": "🌙 Night (12–6 AM)",      "value": _fmt_time(_grp(0, 6)),   "inline": True},
+        {"name": "🌅 Morning (6 AM–12 PM)",  "value": _fmt_time(_grp(6, 12)),  "inline": True},
+        {"name": "☀️ Afternoon (12–6 PM)",   "value": _fmt_time(_grp(12, 18)), "inline": True},
+        {"name": "🌆 Evening (6 PM–12 AM)",  "value": _fmt_time(_grp(18, 24)), "inline": True},
+        {"name": "⏰ Peak Hour",
+         "value": f"{peak_hour % 12 or 12} {'AM' if peak_hour < 12 else 'PM'} ({_fmt_time(peak_mins)})",
+         "inline": True},
+    ]
+
+    _post(ROBLOX_CHANNEL_ID, {"embeds": [{
+        "title":       "🕐 Peak Hours This Week",
+        "description": "\n".join(lines),
+        "color":       0x9B59B6,
+        "fields":      fields,
         "footer":      {"text": _now_et()},
     }]})
 

@@ -18,7 +18,7 @@ from epic_tracker import check_epic_activity
 from discord_notifier import (
     notify_roblox, notify_epic, notify_error,
     notify_cookie_expired, notify_status, notify_new_friends, notify_unfriended,
-    notify_daily_summary, notify_weekly_games,
+    notify_daily_summary, notify_weekly_games, notify_peak_hours,
 )
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -175,17 +175,26 @@ def main():
         daily["friends_seen"] = list(friends_seen)
         state["daily_stats"]  = daily
 
-        # ── Weekly game stats ────────────────────────────────────────────────
+        # ── Hourly activity (peak hours) ─────────────────────────────────────
+        if status in ("Online (Website)", "In Game", "In Studio"):
+            hour_key = str(datetime.now(_EASTERN).hour)
+            ha = state.setdefault("hourly_activity", {})
+            ha[hour_key] = ha.get(hour_key, 0) + 5
+
+        # ── Weekly game stats + peak hours ───────────────────────────────────
         if status == "In Game" and current_game:
             gs = state.setdefault("game_stats", {})
             gs[current_game] = gs.get(current_game, 0) + 5
 
         if minutes_since(state.get("last_weekly_ts")) >= 7 * 24 * 60:
             gs = state.get("game_stats") or {}
+            ha = state.get("hourly_activity") or {}
             notify_weekly_games(gs)
-            logging.info("Weekly game stats posted.")
-            state["game_stats"]     = {}
-            state["last_weekly_ts"] = now_iso
+            notify_peak_hours(ha)
+            logging.info("Weekly summary posted.")
+            state["game_stats"]      = {}
+            state["hourly_activity"] = {}
+            state["last_weekly_ts"]  = now_iso
 
     except Exception as e:
         roblox_ok  = False
@@ -197,6 +206,22 @@ def main():
     try:
         epic_data = check_epic_activity("ReesieLuvsChan")
         logging.info("EPIC: %s", json.dumps(epic_data))
+
+        # ── Fortnite session timer ───────────────────────────────────────────
+        ft_online      = epic_data.get("online", False)
+        ft_session_ts  = state.get("fortnite_session_start")
+
+        if ft_online:
+            if ft_session_ts:
+                start = datetime.fromisoformat(ft_session_ts)
+                epic_data["session_minutes"] = int(
+                    (datetime.now(timezone.utc) - start).total_seconds() / 60
+                )
+            else:
+                state["fortnite_session_start"] = datetime.now(timezone.utc).isoformat()
+                epic_data["session_minutes"] = 0
+        else:
+            state["fortnite_session_start"] = None
 
         if epic_data.get("error"):
             epic_ok  = False
