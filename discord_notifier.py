@@ -428,6 +428,10 @@ def notify_avatar_changed(username: str, user_id: int, new_avatar_url: str):
 
 
 def notify_missed_runs(minutes_gap: float):
+    # Sanity cap — anything over 24 h is almost certainly a bad baseline,
+    # not a real outage we can usefully describe.
+    if minutes_gap > 1440:
+        return
     missed = max(1, int(minutes_gap // 5) - 1)
     _post(ERROR_CHANNEL_ID, {
         "content": f"<@{PING_USER_ID}>",
