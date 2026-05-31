@@ -214,22 +214,35 @@ def run_bot(device_auth: dict):
         logging.info("Fortnite bot ready — watching %s (%d friends)",
                      TARGET, len(list(bot.friends)))
 
-        # CRITICAL: fortnitepy connects to XMPP but never announces our own
-        # presence. Epic only pushes friends' presence to us AFTER we broadcast
-        # ourselves as "available". Without this, we receive zero presence.
+        # Go AVAILABLE on XMPP. aioxmpp's PresenceManagedClient starts
+        # "unavailable" (invisible) — so it connects but Epic never exchanges
+        # presence. We must set the managed presence to available. Try several
+        # mechanisms and record which works in the diagnostic.
+        avail_results = []
+        # 1) High-level fortnitepy Client.set_presence
+        try:
+            await bot.set_presence("Tracking activity")
+            avail_results.append("set_presence:ok")
+        except Exception as e:
+            avail_results.append(f"set_presence:ERR {type(e).__name__}")
+        # 2) Directly set the aioxmpp managed presence state to available
+        try:
+            import aioxmpp
+            xc = getattr(bot.xmpp, "xmpp_client", None)
+            if xc is not None:
+                xc.presence = aioxmpp.PresenceState(available=True)
+                avail_results.append("managed_presence:ok")
+            else:
+                avail_results.append("managed_presence:no_client")
+        except Exception as e:
+            avail_results.append(f"managed_presence:ERR {type(e).__name__}")
+        # 3) Raw broadcast as a final fallback
         try:
             await bot.xmpp.send_presence()
-            logging.info("Sent initial XMPP presence broadcast")
+            avail_results.append("send_presence:ok")
         except Exception as e:
-            logging.warning("send_presence() failed: %s", e)
-        # Also probe the target directly as a backup to force her presence push.
-        try:
-            target = _find_target_friend()
-            if target is not None:
-                await bot.xmpp.send_presence_probe(target.jid)
-                logging.info("Sent presence probe for %s", TARGET)
-        except Exception as e:
-            logging.warning("send_presence_probe() failed: %s", e)
+            avail_results.append(f"send_presence:ERR {type(e).__name__}")
+        logging.info("Availability attempts: %s", avail_results)
 
         _post(STATUS_CHANNEL, {"embeds": [{
             "title":       "🎮 Fortnite Bot Online",
@@ -261,13 +274,19 @@ def run_bot(device_auth: dict):
                            f"status={(tp.status or '')[:60]!r}")
             else:
                 tp_desc = "TARGET NOT IN FRIEND LIST"
+            # XMPP connection health
+            xc = getattr(bot.xmpp, "xmpp_client", None)
+            xmpp_running = getattr(xc, "running", "n/a") if xc else "no_client"
+            stream_ok = getattr(bot.xmpp, "stream", None) is not None
             _post(ERROR_CHANNEL, {"embeds": [{
                 "title": "🔧 Fortnite Bot Diagnostic",
                 "description": (
                     f"**Total friends:** {len(all_friends)}\n"
                     f"**Friends with presence data:** {len(with_presence)}\n"
                     f"**{TARGET} presence:** {tp_desc}\n"
-                    f"**Sample presences:** {sample}"
+                    f"**Sample presences:** {sample}\n"
+                    f"**XMPP running:** {xmpp_running} · **stream:** {stream_ok}\n"
+                    f"**Availability:** {', '.join(avail_results)}"
                 ),
                 "color": 0xFFA500,
                 "footer": {"text": _now_et()},
