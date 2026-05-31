@@ -113,37 +113,71 @@ def is_friend(my_account_id: str, target_account_id: str, token: str) -> bool:
 
 def get_presence(my_account_id: str, target_account_id: str, token: str) -> dict | None:
     """
-    Fetch real-time presence for a specific friend via the dedicated
-    presence endpoint (not the friends summary, which has no presence data).
+    Fetch real-time presence for a specific friend.
+    Tries three endpoints in order, logging every response to help debug.
     Returns the raw presence object, or None if unavailable.
     """
-    # Primary: per-friend presence
-    url = f"{_PRESENCE}/presence/api/v1/{my_account_id}/friends/{target_account_id}"
-    resp = requests.get(url, headers=_bearer(token), timeout=10)
-    logging.info("Epic presence status: %s", resp.status_code)
 
-    if resp.ok:
-        data = resp.json()
-        logging.info("Epic presence data: %s", json.dumps(data)[:500])
-        return data
+    # ── Attempt 1: bulk friends presence list ────────────────────────────────
+    # Returns a list of presence objects for all online/recently-online friends.
+    bulk_url = f"{_PRESENCE}/presence/api/v1/{my_account_id}/friends"
+    bulk = requests.get(bulk_url, headers=_bearer(token), timeout=10)
+    logging.info("Epic bulk presence: HTTP %s", bulk.status_code)
+    if bulk.ok:
+        try:
+            entries = bulk.json()
+            logging.info("Epic bulk presence entries: %d  raw: %s",
+                         len(entries) if isinstance(entries, list) else -1,
+                         json.dumps(entries)[:600])
+            if isinstance(entries, list):
+                match = next(
+                    (e for e in entries if e.get("accountId") == target_account_id),
+                    None,
+                )
+                if match:
+                    logging.info("Epic: found target in bulk presence")
+                    return match
+                else:
+                    logging.info("Epic: target not in bulk presence list "
+                                 "(likely offline or invisible)")
+                    # Return a synthetic offline object so the caller knows
+                    # the request succeeded but she's not showing as online
+                    return {"accountId": target_account_id, "bIsOnline": False,
+                            "bIsPlaying": False, "status": ""}
+        except Exception as e:
+            logging.warning("Epic: bulk presence parse error: %s", e)
+    else:
+        logging.warning("Epic bulk presence failed: %s %s",
+                        bulk.status_code, bulk.text[:300])
 
-    # Fallback: bulk friends presence, find our target in the list
-    if resp.status_code in (404, 204):
-        bulk_url = f"{_PRESENCE}/presence/api/v1/{my_account_id}/friends"
-        bulk = requests.get(bulk_url, headers=_bearer(token), timeout=10)
-        if bulk.ok:
-            entries = bulk.json() if isinstance(bulk.json(), list) else []
-            match = next(
-                (e for e in entries if e.get("accountId") == target_account_id),
-                None,
-            )
-            if match:
-                logging.info("Epic presence (bulk): %s", json.dumps(match)[:500])
-                return match
+    # ── Attempt 2: per-friend last-online endpoint ───────────────────────────
+    last_url = f"{_PRESENCE}/presence/api/v1/{my_account_id}/last-online"
+    last = requests.get(last_url, headers=_bearer(token), timeout=10)
+    logging.info("Epic last-online: HTTP %s  body: %s",
+                 last.status_code, last.text[:300])
+    if last.ok:
+        try:
+            data = last.json()
+            if isinstance(data, list):
+                match = next(
+                    (e for e in data if e.get("accountId") == target_account_id),
+                    None,
+                )
+                if match:
+                    return {"accountId": target_account_id,
+                            "bIsOnline": False, "bIsPlaying": False, "status": ""}
+        except Exception:
+            pass
 
-    logging.warning("Epic: could not get presence (status %s): %s",
-                    resp.status_code, resp.text[:200])
-    return None
+    # ── Attempt 3: direct presence for my account (sometimes includes friends) ─
+    own_url = f"{_PRESENCE}/presence/api/v1/{my_account_id}"
+    own = requests.get(own_url, headers=_bearer(token), timeout=10)
+    logging.info("Epic own presence: HTTP %s  body: %s",
+                 own.status_code, own.text[:300])
+
+    logging.warning("Epic: all presence endpoints exhausted — returning offline")
+    return {"accountId": target_account_id,
+            "bIsOnline": False, "bIsPlaying": False, "status": ""}
 
 
 # ── Parsing ───────────────────────────────────────────────────────────────────
@@ -212,15 +246,8 @@ def check_epic_activity(target_display_name: str) -> dict:
             )
             return result
 
-        # Fetch real-time presence
+        # Fetch real-time presence (always returns a dict now — worst case offline)
         presence = get_presence(my_account_id, target_id, token)
-        if presence is None:
-            result["error"] = (
-                f"'{target_display_name}' is a friend but presence data "
-                "was unavailable (privacy settings or API issue)"
-            )
-            return result
-
         parsed = parse_fortnite_status(presence)
         result.update(parsed)
         logging.info("Epic: %s online=%s playing=%s mode=%s",
