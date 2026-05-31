@@ -181,6 +181,12 @@ def _build_embed(is_online: bool, is_playing: bool, status_text: str,
 def run_bot(device_auth: dict):
     start = time.time()
 
+    # fortnitepy/aioxmpp touch asyncio.get_event_loop() during Client
+    # construction; on Python 3.11+ that raises "no running event loop"
+    # unless a loop is already set on this thread. Create one up front.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     # Shared state (mutated by events, read by periodic loop)
     state = {
         "is_online":      False,
@@ -228,7 +234,7 @@ def run_bot(device_auth: dict):
         }]})
 
         # Start the 5-minute periodic status loop
-        asyncio.get_event_loop().create_task(_status_loop())
+        asyncio.create_task(_status_loop())
 
         # Exit cleanly before GitHub's 6h hard kill
         remaining = MAX_RUNTIME_SECS - (time.time() - start)
