@@ -150,9 +150,9 @@ def notify_roblox(data: dict, prev: dict | None = None):
 
     embeds = [main_embed]
 
-    # One mini-embed per friend (up to 9, Discord max is 10 total)
-    # Priority: same-server first, then in-game elsewhere, then online
-    shown = (same_server[:3] + in_game[:3] + online[:3])[:9]
+    # One mini-embed per friend (up to 9 — Discord's max is 10 embeds total,
+    # and the main embed takes one slot). Priority: same-server, in-game, online.
+    shown = (same_server + in_game + online)[:9]
     for f in shown:
         profile_url = f"https://www.roblox.com/users/{f['user_id']}/profile" if f.get("user_id") else None
         fname   = f.get("name", "?")
