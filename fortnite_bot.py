@@ -191,6 +191,14 @@ def run_bot(device_auth: dict):
         )
     )
 
+    # Epic shut down the public GraphQL endpoint that fortnitepy 3.6.9 calls
+    # during login (account_graphql_get_clients_external_auths → 404).
+    # We don't need external auths (linked Xbox/PSN), so stub it out with the
+    # exact shape _setup_client_user expects: {'myAccount': {'externalAuths': []}}
+    async def _stub_external_auths(*args, **kwargs):
+        return {"myAccount": {"externalAuths": []}}
+    bot.http.account_graphql_get_clients_external_auths = _stub_external_auths
+
     # ── Ready ─────────────────────────────────────────────────────────────────
 
     @bot.event
