@@ -27,7 +27,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install fortnitepy requests pytz
+        run: pip install fortnitepy requests pytz aioconsole aioxmpp aiohttp
 
       - name: Run Fortnite bot
         id: bot
