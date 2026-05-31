@@ -214,6 +214,23 @@ def run_bot(device_auth: dict):
         logging.info("Fortnite bot ready — watching %s (%d friends)",
                      TARGET, len(list(bot.friends)))
 
+        # CRITICAL: fortnitepy connects to XMPP but never announces our own
+        # presence. Epic only pushes friends' presence to us AFTER we broadcast
+        # ourselves as "available". Without this, we receive zero presence.
+        try:
+            await bot.xmpp.send_presence()
+            logging.info("Sent initial XMPP presence broadcast")
+        except Exception as e:
+            logging.warning("send_presence() failed: %s", e)
+        # Also probe the target directly as a backup to force her presence push.
+        try:
+            target = _find_target_friend()
+            if target is not None:
+                await bot.xmpp.send_presence_probe(target.jid)
+                logging.info("Sent presence probe for %s", TARGET)
+        except Exception as e:
+            logging.warning("send_presence_probe() failed: %s", e)
+
         _post(STATUS_CHANNEL, {"embeds": [{
             "title":       "🎮 Fortnite Bot Online",
             "description": (
