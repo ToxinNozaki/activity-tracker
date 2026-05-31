@@ -1,8 +1,10 @@
 # Credentials — never commit these
 .env
 epic_auth.json
+epic_device_auth.json
 device_auth.json
 setup_epic.py
+setup_fortnite_device_auth.py
 
 # Runtime state
 logs/

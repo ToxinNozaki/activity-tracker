@@ -1,0 +1,61 @@
+name: Fortnite Bot
+
+on:
+  workflow_dispatch:               # manual start
+  repository_dispatch:
+    types: [run-fortnite-bot]      # self-restart trigger
+
+concurrency:
+  group: fortnite-bot
+  cancel-in-progress: false        # queue restarts, never cancel a live session
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360           # GitHub hard limit — bot exits at 5h 45m
+
+    permissions:
+      contents: write              # needed so GH_TOKEN can fire repository_dispatch
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install fortnitepy requests
+
+      - name: Run Fortnite bot
+        id: bot
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          EPIC_DEVICE_AUTH:  ${{ secrets.EPIC_DEVICE_AUTH }}
+          GH_TOKEN:          ${{ github.token }}
+          GITHUB_PAT:        ${{ secrets.GITHUB_PAT }}
+        run: python fortnite_bot.py
+
+      - name: Notify crash (if bot exited unexpectedly)
+        if: failure() && steps.bot.outcome == 'failure'
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: |
+          python - <<'EOF'
+          import os, requests, datetime
+          from zoneinfo import ZoneInfo
+          token = os.environ.get("DISCORD_BOT_TOKEN", "")
+          if not token:
+              exit()
+          ts = datetime.datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%Y %I:%M %p %Z")
+          requests.post(
+              "https://discord.com/api/v10/channels/1510142665453207715/messages",
+              headers={"Authorization": f"Bot {token}", "Content-Type": "application/json"},
+              json={"embeds": [{"title": "Fortnite Bot Crashed",
+                                "description": "Check GitHub Actions for details.",
+                                "color": 0xFF0000, "footer": {"text": ts}}]},
+              timeout=10,
+          )
+          EOF
