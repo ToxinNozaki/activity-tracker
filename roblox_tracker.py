@@ -69,8 +69,11 @@ def get_friends_list(user_id: int) -> list[dict]:
     return resp.json().get("data", [])
 
 
-def get_usernames_by_ids(user_ids: list[int]) -> dict:
-    """Returns {user_id: username} by querying the users API directly."""
+def get_user_info_by_ids(user_ids: list[int]) -> dict:
+    """
+    Returns {user_id: {"name": username, "display_name": display_name}}.
+    display_name falls back to name if not set.
+    """
     if not user_ids:
         return {}
     try:
@@ -80,11 +83,21 @@ def get_usernames_by_ids(user_ids: list[int]) -> dict:
             headers=_headers(), timeout=10,
         )
         if resp.ok:
-            return {item["id"]: item.get("name", f"User#{item['id']}")
-                    for item in resp.json().get("data", [])}
+            return {
+                item["id"]: {
+                    "name":         item.get("name", f"User#{item['id']}"),
+                    "display_name": item.get("displayName") or item.get("name", f"User#{item['id']}"),
+                }
+                for item in resp.json().get("data", [])
+            }
     except Exception:
         pass
     return {}
+
+
+def get_usernames_by_ids(user_ids: list[int]) -> dict:
+    """Returns {user_id: username}. Thin wrapper around get_user_info_by_ids."""
+    return {uid: info["name"] for uid, info in get_user_info_by_ids(user_ids).items()}
 
 
 def get_game_details(place_id: int) -> dict:
@@ -277,27 +290,35 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
         active = [p for p in friend_presences if p.get("userPresenceType", 0) in (1, 2)]
         active_ids = [p["userId"] for p in active if p.get("userId")]
 
-        # Look up usernames directly from user IDs — avoids any field-name ambiguity
-        name_map = get_usernames_by_ids(active_ids)
+        # Fetch user info (name + displayName) for active friends AND the tracked user
+        all_ids = list({user_id} | set(active_ids))
+        info_map = get_user_info_by_ids(all_ids)
+
         # Fallback: names from the friends list response
         fallback_map = {f["id"]: f.get("name") or f.get("displayName", "") for f in friends}
 
-        # Fetch avatars for active friends + tracked user in one call
-        all_ids = list({user_id} | set(active_ids))
+        # Store the tracked user's display name in the result
+        user_info = info_map.get(user_id, {})
+        result["display_name"] = user_info.get("display_name") or target_username
+
+        # Fetch avatars in one call
         thumbnail_map = get_user_thumbnails(all_ids)
         result["avatar_url"]      = thumbnail_map.get(user_id)
         result["full_avatar_url"] = get_full_avatar_url(user_id)  # for avatar change detection
 
         result["friends_presence"] = [
             {
-                "user_id":    p.get("userId"),
-                "name":       (name_map.get(p.get("userId"))
-                               or fallback_map.get(p.get("userId"))
-                               or f"User#{p.get('userId')}"),
-                "status":     PRESENCE_TYPES.get(p.get("userPresenceType", 0), "Offline"),
-                "game":       p.get("lastLocation") if p.get("userPresenceType") == 2 else None,
-                "game_id":    p.get("gameId"),  # server instance UUID
-                "avatar_url": thumbnail_map.get(p.get("userId")),
+                "user_id":      p.get("userId"),
+                "name":         (info_map.get(p.get("userId"), {}).get("name")
+                                 or fallback_map.get(p.get("userId"))
+                                 or f"User#{p.get('userId')}"),
+                "display_name": (info_map.get(p.get("userId"), {}).get("display_name")
+                                 or fallback_map.get(p.get("userId"))
+                                 or f"User#{p.get('userId')}"),
+                "status":       PRESENCE_TYPES.get(p.get("userPresenceType", 0), "Offline"),
+                "game":         p.get("lastLocation") if p.get("userPresenceType") == 2 else None,
+                "game_id":      p.get("gameId"),  # server instance UUID
+                "avatar_url":   thumbnail_map.get(p.get("userId")),
             }
             for p in active
         ]

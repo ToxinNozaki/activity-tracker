@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 load_dotenv()
 
-from roblox_tracker import (check_roblox_activity,
+from roblox_tracker import (check_roblox_activity, get_user_info_by_ids,
                             get_usernames_by_ids, get_user_thumbnails, check_roblox_health)
 from cookie_updater import check_for_cookie_update
 from bot_commands import check_server_commands
@@ -242,14 +242,16 @@ def main():
 
             if new_ids or removed_ids:
                 all_changed = list(new_ids | removed_ids)
-                name_map  = get_usernames_by_ids(all_changed)
+                info_map  = get_user_info_by_ids(all_changed)
                 thumb_map = get_user_thumbnails(all_changed)
 
                 def _build(uid):
+                    info = info_map.get(uid, {})
                     return {
-                        "user_id":    uid,
-                        "name":       name_map.get(uid, f"User#{uid}"),
-                        "avatar_url": thumb_map.get(uid),
+                        "user_id":      uid,
+                        "name":         info.get("name", f"User#{uid}"),
+                        "display_name": info.get("display_name", ""),
+                        "avatar_url":   thumb_map.get(uid),
                     }
 
                 if new_ids:

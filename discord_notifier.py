@@ -66,9 +66,16 @@ def _roblox_color(status: str) -> int:
 
 
 def notify_roblox(data: dict, prev: dict | None = None):
-    status   = data.get("status", "Unknown")
-    username = data.get("username", "?")
-    ts       = data.get("timestamp", "")
+    status       = data.get("status", "Unknown")
+    username     = data.get("username", "?")
+    display_name = data.get("display_name", "")
+    ts           = data.get("timestamp", "")
+
+    # Build title: "Display Name (username)" if they differ, else just username
+    if display_name and display_name != username:
+        title = f"Roblox — {display_name} ({username})"
+    else:
+        title = f"Roblox — {username}"
 
     fields = [{"name": "Status", "value": status, "inline": True}]
 
@@ -112,11 +119,13 @@ def notify_roblox(data: dict, prev: dict | None = None):
     online  = [f for f in friends if f.get("status") == "Online (Website)"]
 
     def _friend_link(f: dict) -> str:
-        uid = f.get("user_id")
-        name = f.get("name", "?")
+        uid     = f.get("user_id")
+        name    = f.get("name", "?")
+        display = f.get("display_name", "")
+        label   = f"{display} ({name})" if display and display != name else name
         if uid:
-            return f"[{name}](https://www.roblox.com/users/{uid}/profile)"
-        return f"**{name}**"
+            return f"[{label}](https://www.roblox.com/users/{uid}/profile)"
+        return f"**{label}**"
 
     if same_server:
         fields.append({"name": f"👥 In Her Server ({len(same_server)})",
@@ -132,7 +141,7 @@ def notify_roblox(data: dict, prev: dict | None = None):
                        "inline": False})
 
     main_embed = {
-        "title": f"Roblox — {username}",
+        "title": title,
         "color": _roblox_color(status),
         "fields": fields,
         "footer": {"text": f"Logged at {ts}"},
@@ -152,15 +161,18 @@ def notify_roblox(data: dict, prev: dict | None = None):
     shown = (same_server[:3] + in_game[:3] + online[:3])[:9]
     for f in shown:
         profile_url = f"https://www.roblox.com/users/{f['user_id']}/profile" if f.get("user_id") else None
+        fname   = f.get("name", "?")
+        fdisplay = f.get("display_name", "")
+        flabel  = f"{fdisplay} ({fname})" if fdisplay and fdisplay != fname else fname
         if f in same_server:
             color = 0xFFD700  # gold — in her server
-            label = f"{f['name']} — 👥 Same Server"
+            label = f"{flabel} — 👥 Same Server"
         elif f.get("status") == "In Game":
             color = 0x00B04F  # green — in game elsewhere
-            label = f"{f['name']} — {f.get('game') or 'In Game'}"
+            label = f"{flabel} — {f.get('game') or 'In Game'}"
         else:
             color = 0x5865F2  # blurple — online
-            label = f"{f['name']} — Online"
+            label = f"{flabel} — Online"
         friend_embed = {
             "color": color,
             "author": {
@@ -232,13 +244,20 @@ def _friend_embed(f: dict, color: int) -> dict:
     return embed
 
 
+def _roblox_name(f: dict) -> str:
+    """Return 'Display Name (username)' if they differ, else just the name."""
+    name    = f.get("name", "?")
+    display = f.get("display_name", "")
+    return f"{display} ({name})" if display and display != name else name
+
+
 def notify_new_friends(new_friends: list[dict]):
     if not new_friends:
         return
     label = "New Friend Added" if len(new_friends) == 1 else f"{len(new_friends)} New Friends Added"
     names = ", ".join(
-        f"[{f.get('name', '?')}](https://www.roblox.com/users/{f['user_id']}/profile)"
-        if f.get("user_id") else f.get("name", "?")
+        f"[{_roblox_name(f)}](https://www.roblox.com/users/{f['user_id']}/profile)"
+        if f.get("user_id") else _roblox_name(f)
         for f in new_friends
     )
     header = {
@@ -256,8 +275,8 @@ def notify_unfriended(removed_friends: list[dict]):
         return
     label = "Friend Removed" if len(removed_friends) == 1 else f"{len(removed_friends)} Friends Removed"
     names = ", ".join(
-        f"[{f.get('name', '?')}](https://www.roblox.com/users/{f['user_id']}/profile)"
-        if f.get("user_id") else f.get("name", "?")
+        f"[{_roblox_name(f)}](https://www.roblox.com/users/{f['user_id']}/profile)"
+        if f.get("user_id") else _roblox_name(f)
         for f in removed_friends
     )
     header = {
