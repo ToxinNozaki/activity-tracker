@@ -185,13 +185,37 @@ def get_presence(my_account_id: str, target_account_id: str, token: str) -> dict
         if isinstance(data, dict) and ("bIsOnline" in data or "status" in data):
             return data
 
-    # ── Attempt 4: last-online endpoint ──────────────────────────────────────
+    # ── Attempt 4: last-online with correct query param ──────────────────────
+    # The endpoint requires ?acc={accountId} (not accountIds).
+    # Returns when the target was last connected — if within ~10 min they may
+    # still be online, but we can't confirm it so we only use it for last-seen.
     last_url = f"{_PRESENCE}/presence/api/v1/{my_account_id}/last-online"
-    last = requests.get(last_url, headers=_bearer(token), timeout=10)
+    last = requests.get(last_url, headers=_bearer(token), timeout=10,
+                        params={"acc": target_account_id})
     logging.info("Epic [4] last-online: HTTP %s  body: %s",
                  last.status_code, last.text[:2000])
+    if last.ok:
+        try:
+            data = last.json()
+            logging.info("Epic [4] last-online parsed: %s", json.dumps(data)[:500])
+            # data might be a list or dict keyed by accountId
+            entries = data if isinstance(data, list) else (
+                [{"accountId": k, **v} for k, v in data.items()]
+                if isinstance(data, dict) else []
+            )
+            match = next((e for e in entries
+                          if e.get("accountId") == target_account_id), None)
+            if match:
+                last_ts = match.get("last") or match.get("lastOnline") or match.get("lastLogin")
+                logging.info("Epic [4] last-online ts: %s", last_ts)
+                # Can't confirm currently online via this endpoint — return offline
+                # but store the timestamp so the caller can show accurate last-seen
+                return {**_offline, "epic_last_online_ts": last_ts}
+        except Exception as e:
+            logging.warning("Epic [4] parse error: %s", e)
 
-    logging.warning("Epic: all presence endpoints exhausted — returning offline")
+    logging.warning("Epic: all endpoints exhausted — Epic presence requires XMPP "
+                    "which HTTP polling cannot support")
     return _offline
 
 
