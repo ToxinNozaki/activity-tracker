@@ -27,7 +27,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install fortnitepy requests pytz aioconsole aioxmpp aiohttp
+        # aiohttp pinned <3.9 — newer versions require a running event loop in
+        # CookieJar.__init__ which breaks fortnitepy 3.6.9's client construction
+        run: pip install fortnitepy requests pytz aioconsole "aiohttp>=3.8,<3.9"
 
       - name: Run Fortnite bot
         id: bot
