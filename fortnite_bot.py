@@ -203,6 +203,14 @@ def run_bot(device_auth: dict):
 
     @bot.event
     async def event_ready():
+        # Guard against re-entry: fortnitepy fires event_ready again on
+        # reconnect. Without this, each reconnect spawns another status loop
+        # and another restart timer → duplicate posts all night.
+        if state.get("_ready_done"):
+            logging.info("event_ready fired again (reconnect) — skipping re-init")
+            return
+        state["_ready_done"] = True
+
         logging.info("Fortnite bot ready — watching %s", TARGET)
 
         # Seed state from current presence if she's already online
@@ -337,11 +345,14 @@ def run_bot(device_auth: dict):
             "content": f"<@{PING_USER_ID}>",
             "embeds": [{
                 "title":       "❌ Fortnite Bot Crashed",
-                "description": f"`{str(e)[:500]}`",
+                "description": f"`{str(e)[:500]}`\nRestarting in 60s…",
                 "color":        0xFF0000,
                 "footer":      {"text": _now_et()},
             }],
         })
+        # Cooldown before restarting so a persistent failure can't spin into
+        # a rapid crash-loop that spams pings and burns Actions minutes.
+        time.sleep(60)
         _trigger_restart()
 
 
