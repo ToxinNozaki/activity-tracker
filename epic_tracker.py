@@ -50,14 +50,16 @@ def _refresh_access_token(refresh_token: str) -> dict:
     )
     if not resp.ok:
         body = resp.text[:300]
-        if resp.status_code == 400 and "expired" in body.lower():
+        if resp.status_code == 400:
+            # 400 always means the refresh token is invalid or expired
+            # (Epic returns error codes like "invalid_grant", "invalid_token", etc.)
             raise RuntimeError(
-                f"Epic refresh token has expired (HTTP 400). "
+                f"Epic refresh token is invalid or expired (HTTP 400). "
                 f"Re-run setup_epic.py to generate a fresh token. Raw: {body}"
             )
         if resp.status_code == 401:
             raise RuntimeError(
-                f"Epic credentials rejected (HTTP 401). "
+                f"Epic client credentials rejected (HTTP 401). "
                 f"The client ID/secret may be revoked. Raw: {body}"
             )
         resp.raise_for_status()
@@ -72,8 +74,10 @@ def get_access_token() -> tuple[str, str]:
     auth    = json.loads(AUTH_FILE.read_text())
     session = _refresh_access_token(auth["refresh_token"])
 
-    # Persist the new refresh token immediately
-    auth["refresh_token"] = session["refresh_token"]
+    # Persist the new refresh token immediately (guard against missing key)
+    new_refresh = session.get("refresh_token")
+    if new_refresh:
+        auth["refresh_token"] = new_refresh
     AUTH_FILE.write_text(json.dumps(auth, indent=2))
 
     account_id = (
@@ -111,11 +115,11 @@ def is_friend(my_account_id: str, target_account_id: str, token: str) -> bool:
     return any(f.get("accountId") == target_account_id for f in friends)
 
 
-def get_presence(my_account_id: str, target_account_id: str, token: str) -> dict | None:
+def get_presence(my_account_id: str, target_account_id: str, token: str) -> dict:
     """
     Fetch real-time presence for a specific friend.
     Tries three endpoints in order, logging every response to help debug.
-    Returns the raw presence object, or None if unavailable.
+    Always returns a dict — worst case a synthetic offline object.
     """
 
     # ── Attempt 1: bulk friends presence list ────────────────────────────────

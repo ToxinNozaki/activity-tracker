@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from roblox_tracker import (check_roblox_activity, get_user_info_by_ids,
-                            get_usernames_by_ids, get_user_thumbnails, check_roblox_health)
+                            get_user_thumbnails, check_roblox_health)
 from cookie_updater import check_for_cookie_update
 from bot_commands import check_server_commands
 from epic_tracker import check_epic_activity

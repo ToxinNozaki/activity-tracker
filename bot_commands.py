@@ -2,8 +2,7 @@
 Server-channel bot commands.
 
 Polls the commands channel each run and handles slash-style commands.
-Commands are registered with Discord so they appear in the / autocomplete UI.
-The bot picks them up from the channel on the next run (within ~5 min).
+Type any command as a plain message — the bot responds within ~5 minutes.
 
 Available commands:
   /restart  — trigger a new tracker run immediately and reset timers
@@ -202,7 +201,7 @@ def check_server_commands(state: dict) -> None:
         return
 
     last_handled = state.get(_LAST_CMD_ID, "0")
-    cutoff       = datetime.now(timezone.utc) - timedelta(minutes=6)
+    cutoff       = datetime.now(timezone.utc) - timedelta(minutes=10)
 
     # Messages come back newest-first
     for msg in r.json():
@@ -247,23 +246,3 @@ def check_server_commands(state: dict) -> None:
             return
 
 
-# ── One-time slash command registration ──────────────────────────────────────
-
-def register_slash_commands(application_id: str) -> None:
-    """
-    Register /restart, /status, /help as global application commands so they
-    appear in Discord's / autocomplete UI.  Call this once manually or on
-    deploy — re-registering is idempotent and safe to call every run if needed.
-    """
-    commands = [
-        {"name": "restart", "description": "Trigger a new tracker run immediately and reset timers"},
-        {"name": "status",  "description": "Show current Roblox + Fortnite tracker status"},
-        {"name": "help",    "description": "List all available bot commands"},
-    ]
-    for cmd in commands:
-        r = _d("POST", f"/applications/{application_id}/commands", json=cmd)
-        if r.ok:
-            logging.info("bot_commands: registered /%s", cmd["name"])
-        else:
-            logging.warning("bot_commands: failed to register /%s: %s",
-                            cmd["name"], r.text[:200])

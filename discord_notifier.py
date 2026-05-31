@@ -468,7 +468,10 @@ def notify_server_hop(game_name: str, player_count: int | None):
 def notify_avatar_changed(username: str, user_id: int, new_avatar_url: str):
     embed = {
         "title": f"👗 Avatar Changed — {username}",
-        "description": "Her Roblox avatar has been updated.",
+        "description": (
+            f"[View profile](https://www.roblox.com/users/{user_id}/profile)"
+            if user_id else "Her Roblox avatar has been updated."
+        ),
         "color": 0xE91E63,
         "footer": {"text": _now_et()},
     }
@@ -538,14 +541,3 @@ def notify_squad_changed(username: str, old_size: int | None, new_size: int,
     }]})
 
 
-def notify_startup():
-    _post(STATUS_CHANNEL_ID, {"embeds": [{
-        "title": "Activity Tracker Online",
-        "description": (
-            "Now tracking **Moonstar_dovetail** on Roblox "
-            "and **ReesieLuvsChan** on Fortnite.\n"
-            "Activity updates on change · Status check every 15 min"
-        ),
-        "color": 0x5865F2,
-        "footer": {"text": _now_et()},
-    }]})
