@@ -40,22 +40,16 @@ def _post(channel_id: str, payload: dict):
 
 
 def _fmt_last_seen(ts_str: str | None) -> str | None:
-    """Return a human-readable 'X ago' string from an ISO timestamp, or None."""
+    """
+    Return a Discord dynamic timestamp (<t:UNIX:R>) from an ISO timestamp.
+    Renders in Discord as live relative time e.g. '56 minutes ago'.
+    """
     if not ts_str:
         return None
     try:
-        from datetime import timezone as _tz
         past = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-        mins = (datetime.now(_tz.utc) - past).total_seconds() / 60
-        if mins < 1:
-            return "Just now"
-        if mins < 60:
-            return f"{int(mins)}m ago"
-        h, m = divmod(int(mins), 60)
-        if mins < 1440:
-            return f"{h}h {m}m ago" if m else f"{h}h ago"
-        days = int(mins // 1440)
-        return f"{days}d ago"
+        unix = int(past.timestamp())
+        return f"<t:{unix}:R>"
     except Exception:
         return None
 

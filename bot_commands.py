@@ -76,6 +76,7 @@ def _trigger_run() -> bool:
 # ── Formatting helpers ────────────────────────────────────────────────────────
 
 def _fmt_ago(ts_str: str | None) -> str:
+    """Plain relative time string — used for 'last run' display."""
     if not ts_str:
         return "unknown"
     try:
@@ -87,6 +88,17 @@ def _fmt_ago(ts_str: str | None) -> str:
             return f"{int(mins)}m ago"
         h, m = divmod(int(mins), 60)
         return f"{h}h {m}m ago" if m else f"{h}h ago"
+    except Exception:
+        return "unknown"
+
+
+def _fmt_discord_ts(ts_str: str | None) -> str:
+    """Discord dynamic timestamp — renders as live relative time in the client."""
+    if not ts_str:
+        return "unknown"
+    try:
+        past = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return f"<t:{int(past.timestamp())}:R>"
     except Exception:
         return "unknown"
 
@@ -138,7 +150,7 @@ def _handle_status(state: dict, reply_to: str | None = None):
     if r_game:
         r_line += f" • {r_game}{_fmt_session(roblox.get('session_minutes'))}"
     elif r_status == "Offline":
-        last_seen = _fmt_ago(state.get("last_roblox_online_ts"))
+        last_seen = _fmt_discord_ts(state.get("last_roblox_online_ts"))
         r_line += f" — last seen {last_seen}"
 
     # Fortnite
@@ -150,7 +162,7 @@ def _handle_status(state: dict, reply_to: str | None = None):
     elif epic.get("online"):
         e_line = "Online"
     else:
-        last_seen = _fmt_ago(state.get("last_epic_online_ts"))
+        last_seen = _fmt_discord_ts(state.get("last_epic_online_ts"))
         e_line = f"Offline — last seen {last_seen}"
 
     roblox_ok = state.get("last_roblox_ok", True)
