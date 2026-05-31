@@ -10,6 +10,7 @@ Exits at 5h 45m and self-restarts before GitHub's 6h hard limit.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -20,6 +21,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import fortnitepy
+
+# fortnitepy's default iOS client (3446cd72...) was DISABLED by Epic.
+# Override it with the Android game client, which still supports the
+# device_auth grant (verified working).
+_ANDROID_TOKEN = base64.b64encode(
+    b"3f69e56c7649492c8cc29f1af08a8a12:b51ee9cb12234f50a69efa67ef53812e"
+).decode()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -187,6 +195,7 @@ def run_bot(device_auth: dict):
             device_id  = device_auth["device_id"],
             account_id = device_auth["account_id"],
             secret     = device_auth["secret"],
+            ios_token  = _ANDROID_TOKEN,   # disabled iOS client → Android client
         )
     )
 
