@@ -227,6 +227,37 @@ def run_bot(device_auth: dict):
         # Give Epic's XMPP a few seconds to push current friend presences,
         # then read her real status and post it immediately (don't wait 5 min).
         await asyncio.sleep(20)
+
+        # ── DIAGNOSTIC: report what the bot can actually see ─────────────────
+        try:
+            all_friends = list(bot.friends)
+            target = _find_target_friend()
+            with_presence = [f for f in all_friends if f.last_presence is not None]
+            sample = ", ".join(
+                f"{f.display_name}({'on' if f.last_presence.available else 'off'})"
+                for f in with_presence[:8]
+            ) or "none"
+            if target is not None:
+                tp = target.last_presence
+                tp_desc = ("None" if tp is None else
+                           f"available={tp.available} playing={tp.playing} "
+                           f"status={(tp.status or '')[:60]!r}")
+            else:
+                tp_desc = "TARGET NOT IN FRIEND LIST"
+            _post(ERROR_CHANNEL, {"embeds": [{
+                "title": "🔧 Fortnite Bot Diagnostic",
+                "description": (
+                    f"**Total friends:** {len(all_friends)}\n"
+                    f"**Friends with presence data:** {len(with_presence)}\n"
+                    f"**{TARGET} presence:** {tp_desc}\n"
+                    f"**Sample presences:** {sample}"
+                ),
+                "color": 0xFFA500,
+                "footer": {"text": _now_et()},
+            }]})
+        except Exception as e:
+            logging.warning("Diagnostic failed: %s", e)
+
         _refresh_from_presence()
         embed = _build_embed(
             state["is_online"], state["is_playing"], state["status_text"],
