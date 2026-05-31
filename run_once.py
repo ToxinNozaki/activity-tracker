@@ -18,13 +18,12 @@ from roblox_tracker import (check_roblox_activity, get_user_info_by_ids,
                             get_user_thumbnails, check_roblox_health)
 from cookie_updater import check_for_cookie_update
 from bot_commands import check_server_commands
-from epic_tracker import check_epic_activity
 from discord_notifier import (
-    notify_roblox, notify_epic, notify_error,
+    notify_roblox, notify_error,
     notify_cookie_expired, notify_status, notify_new_friends, notify_unfriended,
     notify_daily_summary, notify_weekly_games, notify_peak_hours,
     notify_credential_invalid, notify_server_hop, notify_avatar_changed,
-    notify_missed_runs, notify_roblox_api_down, notify_squad_changed,
+    notify_missed_runs, notify_roblox_api_down,
 )
 
 _EASTERN = ZoneInfo("America/New_York")
@@ -156,12 +155,9 @@ def main():
     check_server_commands(state)
 
     roblox_ok  = True
-    epic_ok    = True
     roblox_msg = ""
-    epic_msg   = ""
 
     prev_roblox_ok = state.get("last_roblox_ok", True)
-    prev_epic_ok   = state.get("last_epic_ok",   True)
 
     # ── Roblox ──────────────────────────────────────────────────────────────
     try:
@@ -326,71 +322,16 @@ def main():
             notify_error("Roblox", "Unexpected error", str(e))
         logging.error("Roblox error: %s", e)
 
-    # ── Epic / Fortnite ──────────────────────────────────────────────────────
-    try:
-        epic_data = check_epic_activity("ReesieLuvsChan")
-        logging.info("EPIC: %s", json.dumps(epic_data))
-
-        # ── Fortnite session timer ───────────────────────────────────────────
-        ft_online      = epic_data.get("online", False)
-        ft_session_ts  = state.get("fortnite_session_start")
-
-        if ft_online:
-            if ft_session_ts:
-                try:
-                    start = datetime.fromisoformat(ft_session_ts)
-                    epic_data["session_minutes"] = int(
-                        (datetime.now(timezone.utc) - start).total_seconds() / 60
-                    )
-                except Exception:
-                    state["fortnite_session_start"] = datetime.now(timezone.utc).isoformat()
-                    epic_data["session_minutes"] = 0
-            else:
-                state["fortnite_session_start"] = datetime.now(timezone.utc).isoformat()
-                epic_data["session_minutes"] = 0
-        else:
-            state["fortnite_session_start"] = None
-
-        # ── Last seen tracking ───────────────────────────────────────────────
-        if ft_online:
-            state["last_epic_online_ts"] = now_iso
-        epic_data["last_seen_ts"] = state.get("last_epic_online_ts")
-
-        if epic_data.get("error"):
-            epic_ok  = False
-            epic_msg = epic_data["error"]
-            # Don't spam errors if she's just not in friends list
-            if "not in your Epic friends" not in epic_msg:
-                notify_error("Fortnite", epic_data["error"])
-        else:
-            notify_epic(epic_data, state.get("epic"))
-
-            # ── Squad detection ──────────────────────────────────────────────
-            new_party = epic_data.get("party_size")
-            old_party = state.get("epic_party_size")
-            if ft_online and new_party is not None and new_party != old_party:
-                notify_squad_changed(
-                    epic_data.get("username", "ReesieLuvsChan"),
-                    old_party, new_party,
-                    epic_data.get("party_max"),
-                )
-                logging.info("Squad changed: %s → %s", old_party, new_party)
-            state["epic_party_size"] = new_party if ft_online else None
-
-        state["epic"] = epic_data
-
-    except Exception as e:
-        epic_ok  = False
-        epic_msg = str(e)
-        notify_error("Fortnite", "Unexpected error", str(e))
-        logging.error("Epic error: %s", e)
+    # ── Fortnite ──────────────────────────────────────────────────────────────
+    # Fortnite is now handled by the dedicated real-time XMPP bot
+    # (fortnite_bot.py / fortnite_bot.yml), not by this 5-minute poller.
 
     # ── Status updates ───────────────────────────────────────────────────────
-    status_changed = (roblox_ok != prev_roblox_ok) or (epic_ok != prev_epic_ok)
+    status_changed = (roblox_ok != prev_roblox_ok)
     periodic_due   = minutes_since(state.get("last_status_ts")) >= STATUS_INTERVAL_MINUTES
 
     if status_changed or periodic_due:
-        notify_status(roblox_ok, epic_ok, roblox_msg, epic_msg)
+        notify_status(roblox_ok, roblox_msg)
         state["last_status_ts"] = now_iso
         if status_changed:
             logging.info("Status CHANGED — posted immediately.")
@@ -398,7 +339,6 @@ def main():
             logging.info("15-minute status check sent.")
 
     state["last_roblox_ok"] = roblox_ok
-    state["last_epic_ok"]   = epic_ok
     state["last_run_ts"]    = now_iso   # used by auto-recovery on next run
 
     save_state(state)

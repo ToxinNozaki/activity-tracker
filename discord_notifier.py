@@ -338,14 +338,12 @@ def notify_credential_invalid(name: str, fix: str):
     })
 
 
-def notify_status(roblox_ok: bool, epic_ok: bool,
-                  roblox_msg: str = "", epic_msg: str = ""):
+def notify_status(roblox_ok: bool, roblox_msg: str = ""):
     r = "✅ Connected" if roblox_ok else f"❌ {roblox_msg}"
-    e = "✅ Connected" if epic_ok   else f"❌ {epic_msg}"
-    color = 0x00B04F if (roblox_ok and epic_ok) else (0xFF0000 if not roblox_ok and not epic_ok else 0xFFA500)
+    color = 0x00B04F if roblox_ok else 0xFF0000
     _post(STATUS_CHANNEL_ID, {"embeds": [{
         "title": "15-Minute Status Check",
-        "description": f"**Roblox** — {r}\n**Fortnite** — {e}",
+        "description": f"**Roblox** — {r}\n*(Fortnite tracked separately by the live bot)*",
         "color": color,
         "footer": {"text": _now_et()},
     }]})
