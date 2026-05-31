@@ -211,21 +211,8 @@ def run_bot(device_auth: dict):
             return
         state["_ready_done"] = True
 
-        logging.info("Fortnite bot ready — watching %s", TARGET)
-
-        # Seed state from current presence if she's already online
-        for f in bot.friends:
-            if f.display_name == TARGET:
-                p = f.last_presence
-                if p and p.available:
-                    state["is_online"]   = True
-                    state["is_playing"]  = p.playing
-                    state["status_text"] = p.status or ""
-                    state["party_size"]  = p.party_size
-                    state["party_max"]   = p.max_party_size
-                    state["session_start"] = time.time()
-                    logging.info("She's already online on startup: %s", p.status)
-                break
+        logging.info("Fortnite bot ready — watching %s (%d friends)",
+                     TARGET, len(list(bot.friends)))
 
         _post(STATUS_CHANNEL, {"embeds": [{
             "title":       "🎮 Fortnite Bot Online",
@@ -236,6 +223,19 @@ def run_bot(device_auth: dict):
             "color":  0x00B04F,
             "footer": {"text": _now_et()},
         }]})
+
+        # Give Epic's XMPP a few seconds to push current friend presences,
+        # then read her real status and post it immediately (don't wait 5 min).
+        await asyncio.sleep(20)
+        _refresh_from_presence()
+        embed = _build_embed(
+            state["is_online"], state["is_playing"], state["status_text"],
+            state["party_size"], state["party_max"],
+            state["session_start"], state["last_online_ts"],
+        )
+        _post(FORTNITE_CHANNEL, {"embeds": [embed]})
+        logging.info("Initial status posted: online=%s playing=%s",
+                     state["is_online"], state["is_playing"])
 
         # Start the 5-minute periodic status loop
         asyncio.create_task(_status_loop())
@@ -257,10 +257,53 @@ def run_bot(device_auth: dict):
 
     # ── 5-minute periodic status post ─────────────────────────────────────────
 
+    def _find_target_friend():
+        for f in bot.friends:
+            if (f.display_name or "").lower() == TARGET.lower():
+                return f
+        return None
+
+    def _refresh_from_presence():
+        """
+        Re-read her live presence from the friend object and update state.
+        fortnitepy keeps friend.last_presence updated from XMPP broadcasts,
+        so this catches her status even when no change event fired (e.g. she
+        was already online before the bot connected).
+        """
+        friend = _find_target_friend()
+        if friend is None:
+            logging.warning("Status refresh: '%s' not found in %d friends",
+                            TARGET, len(list(bot.friends)))
+            return
+        p = friend.last_presence
+        if p is None:
+            logging.info("Status refresh: last_presence is None "
+                         "(no XMPP broadcast received yet)")
+            return
+
+        new_online  = bool(p.available)
+        new_playing = bool(p.playing)
+        logging.info("Status refresh: available=%s playing=%s status=%r",
+                     new_online, new_playing, (p.status or "")[:80])
+
+        # Session timing transitions
+        if new_online and not state["is_online"]:
+            state["session_start"] = time.time()
+        elif not new_online and state["is_online"]:
+            state["last_online_ts"] = time.time()
+            state["session_start"]  = None
+
+        state["is_online"]   = new_online
+        state["is_playing"]  = new_playing
+        state["status_text"] = p.status or ""
+        state["party_size"]  = p.party_size
+        state["party_max"]   = p.max_party_size
+
     async def _status_loop():
         while True:
             await asyncio.sleep(STATUS_INTERVAL)
             try:
+                _refresh_from_presence()
                 embed = _build_embed(
                     state["is_online"],
                     state["is_playing"],
