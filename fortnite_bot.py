@@ -104,66 +104,50 @@ def _trigger_restart():
     except Exception as e:
         logging.warning("Restart trigger failed: %s", e)
 
-def _parse_status(text: str) -> tuple[str | None, int | None, int | None]:
+def _extract_mode(status_text: str) -> str | None:
     """
-    'Fortnite — Battle Royale Zero Unranked Solo - 2 of 4'
-      → game='Fortnite', mode='Battle Royale Zero Unranked Solo', party=2, max=4
-    'Battle Royale Zero Unranked Solo - 100 Left'
-      → mode='Battle Royale Zero Unranked Solo', party=None, max=None
+    Pull a human-readable mode from the status text.
+    'Battle Royale Zero Unranked Solo - 100 Left' → 'Battle Royale Zero Unranked Solo'
+    (The trailing '- N Left' is players remaining in the match, not party size.)
     """
-    mode = party_size = party_max = None
-    if not text:
-        return mode, party_size, party_max
-
-    # Strip leading "Fortnite — " if present
-    body = text.removeprefix("Fortnite — ").strip()
-
+    if not status_text:
+        return None
+    body = status_text.removeprefix("Fortnite — ").strip()
     if " - " in body:
-        m, p = body.rsplit(" - ", 1)
-        mode = m.strip()
-        if " of " in p:
-            try:
-                a, b = p.split(" of ", 1)
-                party_size = int(a.strip())
-                party_max  = int(b.strip())
-            except ValueError:
-                pass
-    elif body:
-        mode = body
-
-    return mode, party_size, party_max
+        body = body.rsplit(" - ", 1)[0].strip()
+    return body or None
 
 def _build_embed(is_online: bool, is_playing: bool, status_text: str,
+                 party_size: int | None, party_max: int | None,
                  session_start: float | None, last_online_ts: float | None) -> dict:
     """Build a Roblox-style status embed for the Fortnite channel."""
-    mode, party_size, party_max = _parse_status(status_text)
+    mode = _extract_mode(status_text)
 
     if is_playing:
-        color  = 0x00B04F   # green
-        label  = "In Game"
+        color = 0x00B04F   # green
+        label = "In Game"
     elif is_online:
-        color  = 0x5865F2   # blurple
-        label  = "Online (Lobby)"
+        color = 0x5865F2   # blurple
+        label = "Online (Lobby)"
     else:
-        color  = 0x747F8D   # grey
-        label  = "Offline"
+        color = 0x747F8D   # grey
+        label = "Offline"
 
     fields = [{"name": "Status", "value": label, "inline": True}]
 
     if mode and is_playing:
         fields.append({"name": "Mode", "value": mode, "inline": True})
 
-    if party_size is not None and party_max is not None and is_playing:
+    if is_playing and party_size:
+        pmax = f" / {party_max}" if party_max else ""
         fields.append({"name": "Party",
-                       "value": f"{party_size} / {party_max}", "inline": True})
+                       "value": f"{party_size}{pmax}", "inline": True})
 
-    # Session timer
     if session_start and is_online:
         secs = time.time() - session_start
         fields.append({"name": "Session",
                        "value": _fmt_duration(secs), "inline": True})
 
-    # Last seen (Discord dynamic timestamp)
     if not is_online and last_online_ts:
         fields.append({"name": "Last Seen",
                        "value": _discord_ts(last_online_ts), "inline": True})
@@ -192,6 +176,8 @@ def run_bot(device_auth: dict):
         "is_online":      False,
         "is_playing":     False,
         "status_text":    "",
+        "party_size":     None,
+        "party_max":      None,
         "session_start":  None,   # float timestamp when she came online
         "last_online_ts": None,   # float timestamp when she last went offline
     }
@@ -215,10 +201,12 @@ def run_bot(device_auth: dict):
         for f in bot.friends:
             if f.display_name == TARGET:
                 p = f.last_presence
-                if p and p.is_online:
+                if p and p.available:
                     state["is_online"]   = True
-                    state["is_playing"]  = p.is_playing
+                    state["is_playing"]  = p.playing
                     state["status_text"] = p.status or ""
+                    state["party_size"]  = p.party_size
+                    state["party_max"]   = p.max_party_size
                     state["session_start"] = time.time()
                     logging.info("She's already online on startup: %s", p.status)
                 break
@@ -261,27 +249,28 @@ def run_bot(device_auth: dict):
                     state["is_online"],
                     state["is_playing"],
                     state["status_text"],
+                    state["party_size"],
+                    state["party_max"],
                     state["session_start"],
                     state["last_online_ts"],
                 )
                 _post(FORTNITE_CHANNEL, {"embeds": [embed]})
                 logging.info("Periodic status: online=%s playing=%s mode=%s",
                              state["is_online"], state["is_playing"],
-                             _parse_status(state["status_text"])[0])
+                             _extract_mode(state["status_text"]))
             except Exception as e:
                 logging.warning("Periodic status error: %s", e)
 
     # ── Presence events (instant alerts on change) ────────────────────────────
 
     @bot.event
-    async def event_friend_presence(before: fortnitepy.FriendPresence | None,
-                                    after:  fortnitepy.FriendPresence):
+    async def event_friend_presence(before, after):
         if after.friend.display_name != TARGET:
             return
 
-        was_online = before.is_online if before else state["is_online"]
-        is_online  = after.is_online
-        is_playing = after.is_playing
+        was_online = before.available if before else state["is_online"]
+        is_online  = after.available
+        is_playing = after.playing
         status_txt = after.status or ""
 
         logging.info("Presence: %s → %s playing=%s | %s",
@@ -291,37 +280,26 @@ def run_bot(device_auth: dict):
         state["is_online"]   = is_online
         state["is_playing"]  = is_playing
         state["status_text"] = status_txt
+        state["party_size"]  = after.party_size
+        state["party_max"]   = after.max_party_size
 
         if is_online and not was_online:
-            # She just came online — start session timer
             state["session_start"] = time.time()
-
         elif not is_online and was_online:
-            # She just went offline — record last-online time
             state["last_online_ts"] = time.time()
             state["session_start"]  = None
 
-        # Build and post an instant embed on any presence change
         embed = _build_embed(
             is_online, is_playing, status_txt,
+            after.party_size, after.max_party_size,
             state["session_start"],
             state["last_online_ts"],
         )
 
-        # Add a description for meaningful transitions
-        desc = None
         if is_online and not was_online:
-            desc = "🟢 Just came online!"
+            embed["description"] = "🟢 Just came online!"
         elif not is_online and was_online:
-            secs = (time.time() - (state.get("_prev_session_start") or time.time()))
-            desc = "⚫ Just went offline."
-
-        if desc:
-            embed["description"] = desc
-
-        # Keep prev session for offline description
-        if is_online and not was_online:
-            state["_prev_session_start"] = state["session_start"]
+            embed["description"] = "⚫ Just went offline."
 
         _post(FORTNITE_CHANNEL, {"embeds": [embed]})
 
