@@ -5,6 +5,7 @@ epic_device_auth.json
 device_auth.json
 setup_epic.py
 setup_fortnite_device_auth.py
+setup_fortnite_actions.py
 
 # Runtime state
 logs/
