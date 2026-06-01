@@ -22,11 +22,20 @@ from zoneinfo import ZoneInfo
 
 import fortnitepy
 
-# fortnitepy's default iOS client (3446cd72...) was DISABLED by Epic.
-# Override it with the Android game client, which still supports the
-# device_auth grant (verified working).
+# Token used for the device_auth GRANT (initial login). The Android game
+# client allows the device_auth grant (the disabled iOS client did too).
 _ANDROID_TOKEN = base64.b64encode(
     b"3f69e56c7649492c8cc29f1af08a8a12:b51ee9cb12234f50a69efa67ef53812e"
+).decode()
+
+# Token used for the SESSION (and therefore the XMPP connection). This is
+# launcherAppClient2 — the exact client the Epic Games Launcher uses. Epic
+# only streams friend presence to the launcher's XMPP session (that's what
+# your social tab is), NOT to the Fortnite game client session that
+# fortnitepy uses by default. Overriding fortnite_token makes our XMPP
+# session authenticate as the launcher → presence should flow.
+_LAUNCHER_TOKEN = base64.b64encode(
+    b"34a02cf8f4414e29b15921876da36f9a:daafbccc737745039dffe53d94fc76cf"
 ).decode()
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -184,10 +193,11 @@ def run_bot(device_auth: dict):
 
     bot = fortnitepy.Client(
         auth=fortnitepy.DeviceAuth(
-            device_id  = device_auth["device_id"],
-            account_id = device_auth["account_id"],
-            secret     = device_auth["secret"],
-            ios_token  = _ANDROID_TOKEN,   # disabled iOS client → Android client
+            device_id      = device_auth["device_id"],
+            account_id     = device_auth["account_id"],
+            secret         = device_auth["secret"],
+            ios_token      = _ANDROID_TOKEN,    # device_auth grant (login)
+            fortnite_token = _LAUNCHER_TOKEN,   # session/XMPP as the launcher
         )
     )
 
