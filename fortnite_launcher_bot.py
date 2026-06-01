@@ -189,12 +189,31 @@ _FROM_RE   = re.compile(r'from="([^"]+)"', re.IGNORECASE)
 _TYPE_RE   = re.compile(r'type="([^"]+)"', re.IGNORECASE)
 _STATUS_RE = re.compile(r"<status\b[^>]*>(.*?)</status>", re.DOTALL | re.IGNORECASE)
 
+def _prettify_product(product: str) -> str:
+    """'RocketLeague' -> 'Rocket League', 'FortniteParty' -> 'Fortnite'."""
+    if not product:
+        return ""
+    p = product.replace("Party", "")
+    # split CamelCase into words
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", p).strip()
+
 def _parse_presence(stanza: str) -> dict | None:
-    """Return {account_id, online, playing, status_text} from a <presence> stanza."""
+    """Return {account_id, online, playing, status_text, game} from a <presence>."""
     m_from = _FROM_RE.search(stanza)
     if not m_from:
         return None
-    account_id = m_from.group(1).split("@")[0]
+    full_from = m_from.group(1)
+    account_id = full_from.split("@")[0]
+
+    # Resource looks like "V2:Fortnite:WIN::uuid" / "V2:RocketLeague:..." —
+    # the second segment is the Epic product (the game she's connected through).
+    game = ""
+    if "/" in full_from:
+        resource = full_from.split("/", 1)[1]
+        if resource.startswith("V2:"):
+            parts = resource.split(":")
+            if len(parts) >= 2 and parts[1].lower() != "launcher":
+                game = _prettify_product(parts[1])
 
     m_type = _TYPE_RE.search(stanza)
     ptype = m_type.group(1).lower() if m_type else "available"
@@ -205,17 +224,20 @@ def _parse_presence(stanza: str) -> dict | None:
     m_status = _STATUS_RE.search(stanza)
     if m_status:
         raw = m_status.group(1).strip()
-        # unescape minimal XML entities
         raw = (raw.replace("&quot;", '"').replace("&amp;", "&")
                   .replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'"))
         try:
             data = json.loads(raw)
             status_text = data.get("Status", "") or ""
             playing = bool(data.get("bIsPlaying", False))
+            # ProductName in the payload is the most reliable game name
+            prod = data.get("ProductName") or data.get("productName")
+            if prod and prod.lower() != "launcher":
+                game = _prettify_product(prod)
         except Exception:
             status_text = raw[:120]
-    return {"account_id": account_id, "online": online,
-            "playing": playing, "status_text": status_text}
+    return {"account_id": account_id, "online": online, "playing": playing,
+            "status_text": status_text, "game": game}
 
 # ── Embed ─────────────────────────────────────────────────────────────────────
 
@@ -223,6 +245,7 @@ def _build_embed(st: dict) -> dict:
     online = st["is_online"]
     playing = st["is_playing"]
     status_text = st["status_text"]
+    game = st.get("game", "")
 
     if playing:
         color, label = 0x00B04F, "In Game"
@@ -232,9 +255,12 @@ def _build_embed(st: dict) -> dict:
         color, label = 0x747F8D, "Offline"
 
     fields = [{"name": "Status", "value": label, "inline": True}]
+    # Which Epic game she's connected through (Fortnite, Rocket League, etc.)
+    if online and game:
+        fields.append({"name": "Game", "value": game, "inline": True})
     # The launcher status line — exactly what the social tab shows
     if online and status_text:
-        fields.append({"name": "Details", "value": status_text, "inline": True})
+        fields.append({"name": "Details", "value": status_text, "inline": False})
     if st.get("session_start") and online:
         fields.append({"name": "Session",
                        "value": _fmt_duration(time.time() - st["session_start"]),
@@ -243,7 +269,13 @@ def _build_embed(st: dict) -> dict:
         fields.append({"name": "Last Seen",
                        "value": _discord_ts(st["last_online_ts"]), "inline": True})
 
-    return {"title": f"Fortnite — {TARGET}", "color": color,
+    # Title reflects the game if known, else generic Epic
+    if online and game:
+        title = f"{game} — {TARGET}"
+    else:
+        title = f"Epic Games — {TARGET}"
+
+    return {"title": title, "color": color,
             "fields": fields, "footer": {"text": f"Logged at {_now_et()}"}}
 
 # ── Main XMPP client ──────────────────────────────────────────────────────────
@@ -256,7 +288,7 @@ async def run_client(device_auth: dict):
     friend_ids = get_friend_ids(my_account_id, token)
 
     st = {
-        "is_online": False, "is_playing": False, "status_text": "",
+        "is_online": False, "is_playing": False, "status_text": "", "game": "",
         "session_start": None, "last_online_ts": None,
         "stanzas": 0, "presence_friends": set(),
         "roster_items": -1, "probes_sent": 0, "friend_ids": len(friend_ids),
@@ -337,10 +369,11 @@ async def run_client(device_auth: dict):
         logging.info("Sent %d presence probes", st["probes_sent"])
 
         _post(STATUS_CHANNEL, {"embeds": [{
-            "title": "🎮 Fortnite Launcher Bot Online",
+            "title": "🎮 Epic Launcher Bot Online",
             "description": (f"Authenticated as the Epic Launcher — reading "
-                            f"**{TARGET}**'s presence exactly like your social tab.\n"
-                            f"Status every 5 min · Instant alerts on change."),
+                            f"**{TARGET}**'s presence for **any Epic game** "
+                            f"(Fortnite, Rocket League, etc.), exactly like your "
+                            f"social tab.\nStatus every 5 min · Instant alerts on change."),
             "color": 0x00B04F, "footer": {"text": _now_et()},
         }]})
 
@@ -435,8 +468,9 @@ async def run_client(device_auth: dict):
                 st["is_online"]   = p["online"]
                 st["is_playing"]  = p["playing"]
                 st["status_text"] = p["status_text"]
-                logging.info("TARGET presence: online=%s playing=%s status=%r",
-                             p["online"], p["playing"], p["status_text"][:80])
+                st["game"]        = p.get("game", "")
+                logging.info("TARGET presence: online=%s playing=%s game=%s status=%r",
+                             p["online"], p["playing"], p.get("game"), p["status_text"][:80])
 
                 if p["online"] and not was_online:
                     st["session_start"] = time.time()
