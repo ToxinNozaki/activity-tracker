@@ -281,7 +281,19 @@ async def run_client(device_auth: dict):
         await wait_for("bind1")
         logging.info("XMPP bound as launcher resource")
 
-        # Go available — this is what makes Epic push friends' presence
+        # Request the roster FIRST. Per XMPP spec a session becomes a
+        # "presence-aware" resource only after retrieving its roster; Epic
+        # appears to gate friend-presence delivery on this. We skipped it
+        # before, which is why we received zero friend presence.
+        await send('<iq xmlns="jabber:client" type="get" id="roster1">'
+                   '<query xmlns="jabber:iq:roster"/></iq>')
+        try:
+            await wait_for("roster1", timeout=12)
+            logging.info("Roster retrieved")
+        except Exception as e:
+            logging.warning("Roster request not answered: %s", e)
+
+        # Now go available — server should push online contacts' presence.
         await send('<presence xmlns="jabber:client"><status></status></presence>')
         logging.info("Sent available presence — now receiving friend presence")
 
