@@ -115,36 +115,48 @@ def _trigger_restart():
 
 # ── Auth: become the launcher ────────────────────────────────────────────────
 
+def _req_with_429_retry(method: str, url: str, *, headers=None, data=None, retries=5):
+    """HTTP with backoff on Epic's 429 rate limit (honors Retry-After if given)."""
+    r = None
+    for i in range(retries):
+        r = requests.request(method, url, headers=headers, data=data, timeout=15)
+        if r.status_code != 429:
+            return r
+        wait = int(r.headers.get("Retry-After", 0)) or min(20 * (i + 1), 120)
+        logging.warning("429 from %s — backing off %ds (try %d/%d)", url, wait, i + 1, retries)
+        time.sleep(wait)
+    return r
+
 def get_launcher_session(device_auth: dict) -> tuple[str, str]:
     """
     device_auth grant (Android, the only client that allows it)
       -> exchange code
       -> redeem as launcherAppClient2
     Returns (launcher_access_token, our_account_id).
+    Retries on 429 so transient rate limits don't fail setup.
     """
-    r = requests.post(
-        _TOKEN_URL,
+    r = _req_with_429_retry(
+        "POST", _TOKEN_URL,
         headers={"Authorization": f"basic {_b64(_ANDROID)}",
                  "Content-Type": "application/x-www-form-urlencoded"},
         data={"grant_type": "device_auth",
               "account_id": device_auth["account_id"],
               "device_id":  device_auth["device_id"],
               "secret":     device_auth["secret"]},
-        timeout=15,
     )
     r.raise_for_status()
     android_token = r.json()["access_token"]
 
-    r = requests.get(_EXCH_URL, headers={"Authorization": f"bearer {android_token}"}, timeout=10)
+    r = _req_with_429_retry("GET", _EXCH_URL,
+                            headers={"Authorization": f"bearer {android_token}"})
     r.raise_for_status()
     code = r.json()["code"]
 
-    r = requests.post(
-        _TOKEN_URL,
+    r = _req_with_429_retry(
+        "POST", _TOKEN_URL,
         headers={"Authorization": f"basic {_b64(_LAUNCHER)}",
                  "Content-Type": "application/x-www-form-urlencoded"},
         data={"grant_type": "exchange_code", "exchange_code": code},
-        timeout=15,
     )
     r.raise_for_status()
     s = r.json()
@@ -290,6 +302,7 @@ async def run_forever(device_auth: dict):
     start    = time.time()
     deadline = start + MAX_RUNTIME_SECS
     token, my_account_id = get_launcher_session(device_auth)
+    token_time = time.time()
     target_id  = lookup_account_id(TARGET, token) or ""
     logging.info("Target %s account_id=%s", TARGET, target_id)
     friend_ids = get_friend_ids(my_account_id, token)
@@ -326,12 +339,16 @@ async def run_forever(device_auth: dict):
                 "description": f"`{str(e)[:400]}`\nRestarting…",
                 "color": 0xFF0000, "footer": {"text": _now_et()}}]})
             break
-        # Refresh the launcher token before the next session so it never
-        # expires mid-run (cheap; only runs between sessions).
-        try:
-            token, my_account_id = get_launcher_session(device_auth)
-        except Exception as e:
-            logging.warning("Token refresh failed: %s", e)
+        # Reuse the token across reconnects — only refresh if it's getting old
+        # (~90 min). Refreshing on every reconnect is what triggered Epic's
+        # 429 rate limit. Epic access tokens are valid for ~2-4 hours.
+        if time.time() - token_time > 90 * 60:
+            try:
+                token, my_account_id = get_launcher_session(device_auth)
+                token_time = time.time()
+                logging.info("Refreshed launcher token (age-based)")
+            except Exception as e:
+                logging.warning("Token refresh failed: %s", e)
 
     logging.info("Runtime limit reached — triggering restart")
     _post(STATUS_CHANNEL, {"embeds": [{
