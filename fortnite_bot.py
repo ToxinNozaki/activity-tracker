@@ -228,6 +228,37 @@ def run_bot(device_auth: dict):
         logging.info("Fortnite bot ready — watching %s (%d friends)",
                      TARGET, len(list(bot.friends)))
 
+        # ── RAW STANZA DIAGNOSTIC ───────────────────────────────────────────
+        # Wrap fortnitepy's process_presence so we can count how many presence
+        # stanzas actually arrive over the wire, and capture samples. This is
+        # the decisive test: 0 = Epic isn't sending us presence at all;
+        # >0 but last_presence stays None = fortnitepy can't parse them.
+        state["_stanza_count"] = 0
+        state["_stanza_samples"] = []
+        try:
+            _orig_process = bot.xmpp.process_presence
+            def _wrapped_process(stanza):
+                try:
+                    state["_stanza_count"] += 1
+                    if len(state["_stanza_samples"]) < 4:
+                        frm = getattr(stanza, "from_", None)
+                        state["_stanza_samples"].append(str(frm)[:60])
+                except Exception:
+                    pass
+                return _orig_process(stanza)
+            bot.xmpp.process_presence = _wrapped_process
+            # Re-register on the dispatcher so our wrapper is what gets called
+            import aioxmpp.dispatcher
+            disp = bot.xmpp.xmpp_client.summon(aioxmpp.dispatcher.SimplePresenceDispatcher)
+            try:
+                disp.unregister_callback(None, None)
+            except Exception:
+                pass
+            disp.register_callback(None, None, _wrapped_process)
+            logging.info("Raw stanza diagnostic hook installed")
+        except Exception as e:
+            logging.warning("Could not install stanza hook: %s", e)
+
         # Go AVAILABLE on XMPP. aioxmpp's PresenceManagedClient starts
         # "unavailable" (invisible) — so it connects but Epic never exchanges
         # presence. We must set the managed presence to available. Try several
@@ -300,7 +331,9 @@ def run_bot(device_auth: dict):
                     f"**{TARGET} presence:** {tp_desc}\n"
                     f"**Sample presences:** {sample}\n"
                     f"**XMPP running:** {xmpp_running} · **stream:** {stream_ok}\n"
-                    f"**Availability:** {', '.join(avail_results)}"
+                    f"**Availability:** {', '.join(avail_results)}\n"
+                    f"**Raw presence stanzas received:** {state.get('_stanza_count', 0)}\n"
+                    f"**Stanza senders:** {', '.join(state.get('_stanza_samples', [])) or 'none'}"
                 ),
                 "color": 0xFFA500,
                 "footer": {"text": _now_et()},
