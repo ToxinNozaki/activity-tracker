@@ -345,7 +345,22 @@ async def run_client(device_auth: dict):
                 if not p or not p["account_id"]:
                     continue
                 if p["account_id"] != my_account_id:
+                    first = len(st["presence_friends"]) == 0
                     st["presence_friends"].add(p["account_id"])
+                    if first:
+                        # First-ever friend presence proves the launcher
+                        # approach receives presence. One-time confirmation.
+                        _post(ERROR_CHANNEL, {"embeds": [{
+                            "title": "✅ Presence Delivery CONFIRMED",
+                            "description": (
+                                "The launcher bot just received real friend "
+                                "presence over XMPP — the approach works! It will "
+                                f"now report **{TARGET}** automatically whenever "
+                                "she's online."
+                            ),
+                            "color": 0x00B04F, "footer": {"text": _now_et()},
+                        }]})
+                        logging.info("First friend presence received — approach works")
                 # Only the target drives the channel posts
                 if target_id and p["account_id"] != target_id:
                     continue
