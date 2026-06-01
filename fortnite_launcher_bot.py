@@ -373,9 +373,19 @@ async def run_client(device_auth: dict):
             _post(FORTNITE_CHANNEL, {"embeds": [_build_embed(st)]})
             while True:
                 await asyncio.sleep(STATUS_INTERVAL)
+                # Re-probe every friend so we actively catch anyone who came
+                # online since the last cycle (roster is populated = subscribed).
+                for fid in friend_ids:
+                    try:
+                        await send(f'<presence xmlns="jabber:client" type="probe" '
+                                   f'to="{fid}@{_XMPP_DOMAIN}"/>')
+                    except Exception:
+                        break
+                await asyncio.sleep(4)   # let probe replies arrive
                 _post(FORTNITE_CHANNEL, {"embeds": [_build_embed(st)]})
-                logging.info("Periodic: online=%s playing=%s status=%r",
-                             st["is_online"], st["is_playing"], st["status_text"][:60])
+                logging.info("Periodic: re-probed %d friends · online=%s playing=%s "
+                             "friends_seen=%d", len(friend_ids), st["is_online"],
+                             st["is_playing"], len(st["presence_friends"]))
 
         # ── Background: runtime limit → restart ──────────────────────────────
         async def restart_timer():
