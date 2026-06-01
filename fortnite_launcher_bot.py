@@ -162,6 +162,25 @@ def lookup_account_id(display_name: str, token: str) -> str | None:
     r.raise_for_status()
     return r.json().get("id")
 
+_FRIENDS_SVC = "https://friends-public-service-prod06.ol.epicgames.com"
+
+def get_friend_ids(account_id: str, token: str) -> list[str]:
+    """Friend account IDs from Epic's friends HTTP service (not XMPP roster)."""
+    for url in (f"{_FRIENDS_SVC}/friends/api/public/friends/{account_id}",
+                f"{_FRIENDS_SVC}/friends/api/v1/{account_id}/friends"):
+        try:
+            r = requests.get(url, headers={"Authorization": f"bearer {token}"}, timeout=10)
+            if r.ok:
+                data = r.json()
+                if isinstance(data, list):
+                    ids = [f.get("accountId") for f in data if f.get("accountId")]
+                    if ids:
+                        logging.info("Fetched %d friend IDs", len(ids))
+                        return ids
+        except Exception as e:
+            logging.warning("get_friend_ids failed (%s): %s", url, e)
+    return []
+
 # ── Presence parsing ──────────────────────────────────────────────────────────
 
 _PRESENCE_RE = re.compile(r"<presence\b[^>]*>.*?</presence>|<presence\b[^>]*/>",
@@ -234,11 +253,13 @@ async def run_client(device_auth: dict):
     token, my_account_id = get_launcher_session(device_auth)
     target_id = lookup_account_id(TARGET, token) or ""
     logging.info("Target %s account_id=%s", TARGET, target_id)
+    friend_ids = get_friend_ids(my_account_id, token)
 
     st = {
         "is_online": False, "is_playing": False, "status_text": "",
         "session_start": None, "last_online_ts": None,
         "stanzas": 0, "presence_friends": set(),
+        "roster_items": -1, "probes_sent": 0, "friend_ids": len(friend_ids),
     }
 
     resource = f"V2:launcher:WIN::{uuid.uuid4().hex.upper()}"
@@ -288,14 +309,32 @@ async def run_client(device_auth: dict):
         await send('<iq xmlns="jabber:client" type="get" id="roster1">'
                    '<query xmlns="jabber:iq:roster"/></iq>')
         try:
-            await wait_for("roster1", timeout=12)
-            logging.info("Roster retrieved")
+            roster_msg = await wait_for("roster1", timeout=12)
+            st["roster_items"] = roster_msg.count("<item ")
+            logging.info("Roster retrieved: %d items", st["roster_items"])
         except Exception as e:
             logging.warning("Roster request not answered: %s", e)
 
-        # Now go available — server should push online contacts' presence.
-        await send('<presence xmlns="jabber:client"><status></status></presence>')
-        logging.info("Sent available presence — now receiving friend presence")
+        # Go available with a REAL launcher-style status payload (not empty).
+        # Epic may only reciprocate presence to a properly-formed launcher.
+        status_json = json.dumps({
+            "Status": "", "bIsPlaying": False, "bIsJoinable": False,
+            "bHasVoiceSupport": False, "SessionId": "", "Properties": {},
+        }).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        await send(f'<presence xmlns="jabber:client"><status>{status_json}</status></presence>')
+        logging.info("Sent available launcher presence")
+
+        # Epic doesn't use the XMPP roster for friends, so the server has no
+        # subscriptions to push against. Explicitly PROBE each friend — the
+        # server replies with current presence for any who are online.
+        for fid in friend_ids:
+            try:
+                await send(f'<presence xmlns="jabber:client" type="probe" '
+                           f'to="{fid}@{_XMPP_DOMAIN}"/>')
+                st["probes_sent"] += 1
+            except Exception:
+                break
+        logging.info("Sent %d presence probes", st["probes_sent"])
 
         _post(STATUS_CHANNEL, {"embeds": [{
             "title": "🎮 Fortnite Launcher Bot Online",
@@ -323,6 +362,9 @@ async def run_client(device_auth: dict):
                 "description": (
                     f"**Stanzas received:** {st['stanzas']}\n"
                     f"**Friends with presence:** {len(st['presence_friends'])}\n"
+                    f"**Friend IDs fetched:** {st['friend_ids']} · "
+                    f"**probes sent:** {st['probes_sent']}\n"
+                    f"**XMPP roster items:** {st['roster_items']}\n"
                     f"**{TARGET} online:** {st['is_online']} · playing: {st['is_playing']}\n"
                     f"**Status line:** {st['status_text'] or '(none)'}"
                 ),
