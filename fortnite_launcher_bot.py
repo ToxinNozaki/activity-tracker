@@ -280,10 +280,17 @@ def _build_embed(st: dict) -> dict:
 
 # ── Main XMPP client ──────────────────────────────────────────────────────────
 
-async def run_client(device_auth: dict):
-    start = time.time()
+async def run_forever(device_auth: dict):
+    """
+    Outer loop: maintains the XMPP session, reconnecting quietly when Epic
+    drops the WebSocket (which is routine on long connections). Only a genuine
+    fatal error pings the user. Exits + triggers a GitHub restart at the
+    runtime limit.
+    """
+    start    = time.time()
+    deadline = start + MAX_RUNTIME_SECS
     token, my_account_id = get_launcher_session(device_auth)
-    target_id = lookup_account_id(TARGET, token) or ""
+    target_id  = lookup_account_id(TARGET, token) or ""
     logging.info("Target %s account_id=%s", TARGET, target_id)
     friend_ids = get_friend_ids(my_account_id, token)
 
@@ -294,6 +301,48 @@ async def run_client(device_auth: dict):
         "roster_items": -1, "probes_sent": 0, "friend_ids": len(friend_ids),
     }
 
+    first = True
+    fails = 0
+    while time.time() < deadline:
+        sess_start = time.time()
+        try:
+            await _xmpp_session(token, my_account_id, target_id,
+                                friend_ids, st, deadline, first)
+            first = False
+            fails = 0
+            logging.info("XMPP session ended cleanly — reconnecting")
+            await asyncio.sleep(5)
+        except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError,
+                OSError, ConnectionError) as e:
+            first = False
+            fails = 0 if (time.time() - sess_start) > 120 else fails + 1
+            backoff = min(10 * max(1, fails), 120)
+            logging.warning("XMPP disconnected (%s) — reconnecting in %ds", e, backoff)
+            await asyncio.sleep(backoff)
+        except Exception as e:
+            logging.error("Fatal launcher error: %s", e, exc_info=True)
+            _post(ERROR_CHANNEL, {"content": f"<@{PING_USER_ID}>", "embeds": [{
+                "title": "❌ Launcher Bot Fatal Error",
+                "description": f"`{str(e)[:400]}`\nRestarting…",
+                "color": 0xFF0000, "footer": {"text": _now_et()}}]})
+            break
+        # Refresh the launcher token before the next session so it never
+        # expires mid-run (cheap; only runs between sessions).
+        try:
+            token, my_account_id = get_launcher_session(device_auth)
+        except Exception as e:
+            logging.warning("Token refresh failed: %s", e)
+
+    logging.info("Runtime limit reached — triggering restart")
+    _post(STATUS_CHANNEL, {"embeds": [{
+        "title": "🔄 Launcher Bot Restarting",
+        "description": "Runtime cycle complete — reconnecting in ~30s.",
+        "color": 0xFFA500, "footer": {"text": _now_et()}}]})
+    _trigger_restart()
+
+
+async def _xmpp_session(token, my_account_id, target_id, friend_ids,
+                        st, deadline, first):
     resource = f"V2:launcher:WIN::{uuid.uuid4().hex.upper()}"
     plain = base64.b64encode(
         b"\x00" + my_account_id.encode() + b"\x00" + token.encode()
@@ -368,121 +417,115 @@ async def run_client(device_auth: dict):
                 break
         logging.info("Sent %d presence probes", st["probes_sent"])
 
-        _post(STATUS_CHANNEL, {"embeds": [{
-            "title": "🎮 Epic Launcher Bot Online",
-            "description": (f"Authenticated as the Epic Launcher — reading "
-                            f"**{TARGET}**'s presence for **any Epic game** "
-                            f"(Fortnite, Rocket League, etc.), exactly like your "
-                            f"social tab.\nStatus every 5 min · Instant alerts on change."),
-            "color": 0x00B04F, "footer": {"text": _now_et()},
-        }]})
+        if first:
+            _post(STATUS_CHANNEL, {"embeds": [{
+                "title": "🎮 Epic Launcher Bot Online",
+                "description": (f"Authenticated as the Epic Launcher — reading "
+                                f"**{TARGET}**'s presence for **any Epic game** "
+                                f"(Fortnite, Rocket League, etc.), exactly like your "
+                                f"social tab.\nStatus every 5 min · Instant alerts on change."),
+                "color": 0x00B04F, "footer": {"text": _now_et()},
+            }]})
 
         # ── Background: keepalive ────────────────────────────────────────────
         async def keepalive():
             while True:
                 await asyncio.sleep(60)
-                try:
-                    await ws.send(" ")
-                except Exception:
-                    return
+                await ws.send(" ")
 
-        # ── Background: 5-minute status + initial diagnostic ─────────────────
+        # ── Background: 5-minute status (+ one-time diagnostic) ──────────────
         async def status_loop():
-            # Wait a bit for the initial presence burst, then post + diagnose
-            await asyncio.sleep(20)
-            _post(ERROR_CHANNEL, {"embeds": [{
-                "title": "🔧 Launcher Bot Diagnostic",
-                "description": (
-                    f"**Stanzas received:** {st['stanzas']}\n"
-                    f"**Friends with presence:** {len(st['presence_friends'])}\n"
-                    f"**Friend IDs fetched:** {st['friend_ids']} · "
-                    f"**probes sent:** {st['probes_sent']}\n"
-                    f"**XMPP roster items:** {st['roster_items']}\n"
-                    f"**{TARGET} online:** {st['is_online']} · playing: {st['is_playing']}\n"
-                    f"**Status line:** {st['status_text'] or '(none)'}"
-                ),
-                "color": 0xFFA500, "footer": {"text": _now_et()},
-            }]})
-            _post(FORTNITE_CHANNEL, {"embeds": [_build_embed(st)]})
+            if first:
+                await asyncio.sleep(20)
+                _post(ERROR_CHANNEL, {"embeds": [{
+                    "title": "🔧 Launcher Bot Diagnostic",
+                    "description": (
+                        f"**Stanzas received:** {st['stanzas']}\n"
+                        f"**Friends with presence:** {len(st['presence_friends'])}\n"
+                        f"**Friend IDs fetched:** {st['friend_ids']} · "
+                        f"**probes sent:** {st['probes_sent']}\n"
+                        f"**XMPP roster items:** {st['roster_items']}\n"
+                        f"**{TARGET} online:** {st['is_online']} · playing: {st['is_playing']}\n"
+                        f"**Status line:** {st['status_text'] or '(none)'}"
+                    ),
+                    "color": 0xFFA500, "footer": {"text": _now_et()},
+                }]})
+                _post(FORTNITE_CHANNEL, {"embeds": [_build_embed(st)]})
             while True:
                 await asyncio.sleep(STATUS_INTERVAL)
-                # Re-probe every friend so we actively catch anyone who came
-                # online since the last cycle (roster is populated = subscribed).
                 for fid in friend_ids:
                     try:
                         await send(f'<presence xmlns="jabber:client" type="probe" '
                                    f'to="{fid}@{_XMPP_DOMAIN}"/>')
                     except Exception:
                         break
-                await asyncio.sleep(4)   # let probe replies arrive
+                await asyncio.sleep(4)
                 _post(FORTNITE_CHANNEL, {"embeds": [_build_embed(st)]})
                 logging.info("Periodic: re-probed %d friends · online=%s playing=%s "
                              "friends_seen=%d", len(friend_ids), st["is_online"],
                              st["is_playing"], len(st["presence_friends"]))
 
-        # ── Background: runtime limit → restart ──────────────────────────────
-        async def restart_timer():
-            await asyncio.sleep(MAX_RUNTIME_SECS - (time.time() - start))
-            _post(STATUS_CHANNEL, {"embeds": [{
-                "title": "🔄 Launcher Bot Restarting",
-                "description": "Runtime limit reached — reconnecting in ~30s.",
-                "color": 0xFFA500, "footer": {"text": _now_et()}}]})
-            _trigger_restart()
-            await ws.close()
+        # ── Background: close the socket at the runtime deadline ──────────────
+        async def deadline_watch():
+            await asyncio.sleep(max(0, deadline - time.time()))
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
-        asyncio.create_task(keepalive())
-        asyncio.create_task(status_loop())
-        asyncio.create_task(restart_timer())
+        tasks = [asyncio.create_task(keepalive()),
+                 asyncio.create_task(status_loop()),
+                 asyncio.create_task(deadline_watch())]
 
         # ── Main receive loop ────────────────────────────────────────────────
-        async for message in ws:
-            for stanza in _PRESENCE_RE.findall(message):
-                st["stanzas"] += 1
-                p = _parse_presence(stanza)
-                if not p or not p["account_id"]:
-                    continue
-                if p["account_id"] != my_account_id:
-                    first = len(st["presence_friends"]) == 0
-                    st["presence_friends"].add(p["account_id"])
-                    if first:
-                        # First-ever friend presence proves the launcher
-                        # approach receives presence. One-time confirmation.
-                        _post(ERROR_CHANNEL, {"embeds": [{
-                            "title": "✅ Presence Delivery CONFIRMED",
-                            "description": (
-                                "The launcher bot just received real friend "
-                                "presence over XMPP — the approach works! It will "
-                                f"now report **{TARGET}** automatically whenever "
-                                "she's online."
-                            ),
-                            "color": 0x00B04F, "footer": {"text": _now_et()},
-                        }]})
-                        logging.info("First friend presence received — approach works")
-                # Only the target drives the channel posts
-                if target_id and p["account_id"] != target_id:
-                    continue
-                if not target_id and TARGET.lower() not in stanza.lower():
-                    continue
+        try:
+            async for message in ws:
+                for stanza in _PRESENCE_RE.findall(message):
+                    st["stanzas"] += 1
+                    p = _parse_presence(stanza)
+                    if not p or not p["account_id"]:
+                        continue
+                    if p["account_id"] != my_account_id:
+                        is_first = len(st["presence_friends"]) == 0
+                        st["presence_friends"].add(p["account_id"])
+                        if is_first:
+                            _post(ERROR_CHANNEL, {"embeds": [{
+                                "title": "✅ Presence Delivery CONFIRMED",
+                                "description": (
+                                    "The launcher bot just received real friend "
+                                    "presence over XMPP — the approach works! It will "
+                                    f"now report **{TARGET}** automatically whenever "
+                                    "she's online."
+                                ),
+                                "color": 0x00B04F, "footer": {"text": _now_et()},
+                            }]})
+                            logging.info("First friend presence received — works")
+                    if target_id and p["account_id"] != target_id:
+                        continue
+                    if not target_id and TARGET.lower() not in stanza.lower():
+                        continue
 
-                was_online = st["is_online"]
-                st["is_online"]   = p["online"]
-                st["is_playing"]  = p["playing"]
-                st["status_text"] = p["status_text"]
-                st["game"]        = p.get("game", "")
-                logging.info("TARGET presence: online=%s playing=%s game=%s status=%r",
-                             p["online"], p["playing"], p.get("game"), p["status_text"][:80])
+                    was_online = st["is_online"]
+                    st["is_online"]   = p["online"]
+                    st["is_playing"]  = p["playing"]
+                    st["status_text"] = p["status_text"]
+                    st["game"]        = p.get("game", "")
+                    logging.info("TARGET presence: online=%s playing=%s game=%s status=%r",
+                                 p["online"], p["playing"], p.get("game"), p["status_text"][:80])
 
-                if p["online"] and not was_online:
-                    st["session_start"] = time.time()
-                    embed = _build_embed(st); embed["description"] = "🟢 Just came online!"
-                    _post(FORTNITE_CHANNEL, {"embeds": [embed]})
-                elif not p["online"] and was_online:
-                    st["last_online_ts"] = time.time(); st["session_start"] = None
-                    embed = _build_embed(st); embed["description"] = "⚫ Just went offline."
-                    _post(FORTNITE_CHANNEL, {"embeds": [embed]})
-                elif p["online"]:
-                    # status change while online (mode/party switch)
-                    _post(FORTNITE_CHANNEL, {"embeds": [_build_embed(st)]})
+                    if p["online"] and not was_online:
+                        st["session_start"] = time.time()
+                        embed = _build_embed(st); embed["description"] = "🟢 Just came online!"
+                        _post(FORTNITE_CHANNEL, {"embeds": [embed]})
+                    elif not p["online"] and was_online:
+                        st["last_online_ts"] = time.time(); st["session_start"] = None
+                        embed = _build_embed(st); embed["description"] = "⚫ Just went offline."
+                        _post(FORTNITE_CHANNEL, {"embeds": [embed]})
+                    elif p["online"]:
+                        _post(FORTNITE_CHANNEL, {"embeds": [_build_embed(st)]})
+        finally:
+            for t in tasks:
+                t.cancel()
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -500,12 +543,15 @@ def _load_device_auth() -> dict:
 def main():
     device_auth = _load_device_auth()
     try:
-        asyncio.run(run_client(device_auth))
+        # run_forever handles reconnects internally and only triggers a restart
+        # at the runtime limit or on a genuine fatal error.
+        asyncio.run(run_forever(device_auth))
     except Exception as e:
-        logging.error("Launcher bot crashed: %s", e, exc_info=True)
+        # Only reached if setup itself fails (auth, etc.) — worth a ping.
+        logging.error("Launcher bot setup failed: %s", e, exc_info=True)
         _post(ERROR_CHANNEL, {
             "content": f"<@{PING_USER_ID}>",
-            "embeds": [{"title": "❌ Launcher Bot Crashed",
+            "embeds": [{"title": "❌ Launcher Bot Setup Failed",
                         "description": f"`{str(e)[:500]}`\nRestarting in 60s…",
                         "color": 0xFF0000, "footer": {"text": _now_et()}}]})
         time.sleep(60)
