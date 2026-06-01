@@ -27,18 +27,16 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        # aiohttp pinned <3.9 — newer versions require a running event loop in
-        # CookieJar.__init__ which breaks fortnitepy 3.6.9's client construction
-        run: pip install fortnitepy requests pytz aioconsole "aiohttp>=3.8,<3.9"
+        run: pip install websockets requests
 
-      - name: Run Fortnite bot
+      - name: Run Fortnite launcher bot
         id: bot
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           EPIC_DEVICE_AUTH:  ${{ secrets.EPIC_DEVICE_AUTH }}
           GH_TOKEN:          ${{ github.token }}
           GITHUB_PAT:        ${{ secrets.GITHUB_PAT }}
-        run: python fortnite_bot.py
+        run: python fortnite_launcher_bot.py
 
       - name: Notify crash (if bot exited unexpectedly)
         if: failure() && steps.bot.outcome == 'failure'
