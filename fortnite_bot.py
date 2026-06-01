@@ -197,7 +197,11 @@ def run_bot(device_auth: dict):
             account_id     = device_auth["account_id"],
             secret         = device_auth["secret"],
             ios_token      = _ANDROID_TOKEN,    # device_auth grant (login)
-            fortnite_token = _LAUNCHER_TOKEN,   # session/XMPP as the launcher
+            # NOTE: tried fortnite_token=_LAUNCHER_TOKEN to authenticate the
+            # session as the Epic Launcher — fortnitepy's login setup makes
+            # Fortnite-game-specific calls the launcher client can't make
+            # (403 forbidden). Reverted to the game client session. The
+            # launcher-resource approach is handled at the XMPP layer instead.
         )
     )
 
