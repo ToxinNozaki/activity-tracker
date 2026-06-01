@@ -250,7 +250,7 @@ def _build_embed(st: dict) -> dict:
     if playing:
         color, label = 0x00B04F, "In Game"
     elif online:
-        color, label = 0x5865F2, "Online"
+        color, label = 0x5865F2, "Online (Launcher)"
     else:
         color, label = 0x747F8D, "Offline"
 
