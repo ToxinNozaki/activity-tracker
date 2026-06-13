@@ -1,4 +1,6 @@
 import os
+import time
+import logging
 import requests
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -278,17 +280,26 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
         friend_ids = [f["id"] for f in friends] if friends else []
         result["all_friend_ids"] = friend_ids
 
-        # Batch in chunks of 50 (presence API limit)
+        # Batch presence in chunks of 50. Retry each chunk so a transient
+        # timeout doesn't silently drop ~50 friends from this run.
         friend_presences = []
         for i in range(0, len(friend_ids), 50):
             chunk = friend_ids[i:i+50]
-            try:
-                friend_presences.extend(get_presence(chunk))
-            except Exception:
-                pass
+            for attempt in range(3):
+                try:
+                    friend_presences.extend(get_presence(chunk))
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        time.sleep(1)
+                    else:
+                        logging.warning("Roblox: presence chunk %d-%d dropped "
+                                        "after 3 tries: %s", i, i + len(chunk), e)
 
         active = [p for p in friend_presences if p.get("userPresenceType", 0) in (1, 2)]
         active_ids = [p["userId"] for p in active if p.get("userId")]
+        logging.info("Roblox friends: %d total · %d presences fetched · %d active",
+                     len(friend_ids), len(friend_presences), len(active))
 
         # Fetch user info (name + displayName) for active friends AND the tracked user
         all_ids = list({user_id} | set(active_ids))
