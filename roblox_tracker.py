@@ -50,25 +50,45 @@ def get_user_id(username: str) -> int | None:
 
 
 def get_presence(user_ids: list[int]) -> list[dict]:
-    resp = requests.post(
-        "https://presence.roblox.com/v1/presence/users",
-        json={"userIds": user_ids},
-        headers=_headers(), timeout=10,
-    )
-    _check_auth(resp)
-    resp.raise_for_status()
-    return resp.json().get("userPresences", [])
+    last_exc = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                "https://presence.roblox.com/v1/presence/users",
+                json={"userIds": user_ids},
+                headers=_headers(), timeout=15,
+            )
+            _check_auth(resp)
+            resp.raise_for_status()
+            return resp.json().get("userPresences", [])
+        except CookieExpiredError:
+            raise
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(1.5)
+    raise last_exc
 
 
 def get_friends_list(user_id: int) -> list[dict]:
-    resp = requests.get(
-        f"https://friends.roblox.com/v1/users/{user_id}/friends",
-        headers=_headers(), timeout=10,
-    )
-    _check_auth(resp)
-    if not resp.ok:
-        return []
-    return resp.json().get("data", [])
+    last_exc = None
+    for attempt in range(3):
+        try:
+            resp = requests.get(
+                f"https://friends.roblox.com/v1/users/{user_id}/friends",
+                headers=_headers(), timeout=15,
+            )
+            _check_auth(resp)
+            if not resp.ok:
+                return []
+            return resp.json().get("data", [])
+        except CookieExpiredError:
+            raise
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(1.5)
+    raise last_exc
 
 
 def get_user_info_by_ids(user_ids: list[int]) -> dict:
@@ -103,34 +123,49 @@ def get_usernames_by_ids(user_ids: list[int]) -> dict:
 
 
 def get_game_details(place_id: int) -> dict:
-    resp = requests.get(
-        f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={place_id}",
-        headers=_headers(), timeout=10,
-    )
-    if not resp.ok:
+    try:
+        resp = requests.get(
+            f"https://games.roblox.com/v1/games/multiget-place-details?placeIds={place_id}",
+            headers=_headers(), timeout=15,
+        )
+        if not resp.ok:
+            return {}
+        data = resp.json()
+        return data[0] if data else {}
+    except Exception:
         return {}
-    data = resp.json()
-    return data[0] if data else {}
 
 
 def get_universe_id(place_id: int) -> int | None:
-    resp = requests.get(
-        f"https://apis.roblox.com/universes/v1/places/{place_id}/universe",
-        timeout=10,
-    )
-    if resp.ok:
-        return resp.json().get("universeId")
+    for attempt in range(2):
+        try:
+            resp = requests.get(
+                f"https://apis.roblox.com/universes/v1/places/{place_id}/universe",
+                timeout=15,
+            )
+            if resp.ok:
+                return resp.json().get("universeId")
+            return None
+        except Exception:
+            if attempt == 0:
+                time.sleep(1)
     return None
 
 
 def get_game_stats(universe_id: int) -> dict:
-    resp = requests.get(
-        f"https://games.roblox.com/v1/games?universeIds={universe_id}",
-        timeout=10,
-    )
-    if resp.ok:
-        data = resp.json().get("data", [])
-        return data[0] if data else {}
+    for attempt in range(2):
+        try:
+            resp = requests.get(
+                f"https://games.roblox.com/v1/games?universeIds={universe_id}",
+                timeout=15,
+            )
+            if resp.ok:
+                data = resp.json().get("data", [])
+                return data[0] if data else {}
+            return {}
+        except Exception:
+            if attempt == 0:
+                time.sleep(1)
     return {}
 
 
@@ -261,19 +296,25 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
             result["game_id"] = job_id  # server instance UUID for same-server detection
 
             if place_id:
-                details   = get_game_details(place_id)
-                game_name = details.get("name") or last_location or "Unknown game"
-                result["game"]          = game_name
-                result["last_location"] = last_location
-                if root_place_id:
-                    result["game_url"] = f"https://www.roblox.com/games/{root_place_id}"
-
+                # Prefer the EXPERIENCE (universe) name — that's the real game
+                # name players see. The place name from multiget-place-details
+                # is often generic ("Game"), which is why it showed wrong before.
+                game_name   = None
                 universe_id = get_universe_id(place_id)
                 if universe_id:
                     stats = get_game_stats(universe_id)
+                    game_name = stats.get("name")
                     result["total_playing"] = stats.get("playing")
                     if job_id:
                         result["server_player_count"] = get_server_player_count(universe_id, job_id)
+                if not game_name:
+                    details = get_game_details(place_id)   # fallback: place name
+                    game_name = details.get("name")
+
+                result["game"]          = game_name or last_location or "Unknown game"
+                result["last_location"] = last_location
+                if root_place_id:
+                    result["game_url"] = f"https://www.roblox.com/games/{root_place_id}"
 
         # Her friends' presences
         friends = get_friends_list(user_id)
