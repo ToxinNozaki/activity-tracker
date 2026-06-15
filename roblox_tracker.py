@@ -307,11 +307,12 @@ def check_roblox_activity(target_username: str, target_user_id: int | None = Non
                     result["total_playing"] = stats.get("playing")
                     if job_id:
                         result["server_player_count"] = get_server_player_count(universe_id, job_id)
-                if not game_name:
-                    details = get_game_details(place_id)   # fallback: place name
-                    game_name = details.get("name")
 
-                result["game"]          = game_name or last_location or "Unknown game"
+                # Order: experience name (best) -> lastLocation (usually right)
+                # -> place name (often generic "Game", last resort)
+                result["game"] = (game_name or last_location
+                                  or get_game_details(place_id).get("name")
+                                  or "Unknown game")
                 result["last_location"] = last_location
                 if root_place_id:
                     result["game_url"] = f"https://www.roblox.com/games/{root_place_id}"
