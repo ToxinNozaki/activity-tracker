@@ -1,25 +1,23 @@
 name: Activity Tracker
 
 on:
-  # The cron is the SOLE scheduler. It runs every 5 minutes, and the
-  # concurrency group below serializes runs so they never overlap or race on
-  # the state cache.
+  # PRIMARY cadence = the self-dispatching repository_dispatch chain (see the
+  # "Keep the 5-minute chain alive" step at the bottom). GitHub's */5 cron is
+  # heavily throttled for this repo and fires only sporadically, so it cannot
+  # be relied on as the scheduler — it's a sparse fallback that only revives
+  # the chain if it ever dies.
   #
-  # The old setup also ran a self-dispatching repository_dispatch chain
-  # (sleep 290 -> fire the next run). That chain could FORK: any time two runs
-  # executed close together (cron colliding with the chain, or a manual run),
-  # each one scheduled its own "next run", permanently doubling the cadence.
-  # The resulting stacked, back-to-back runs restored stale state cache before
-  # the previous run's save had propagated, producing the false
-  # "Tracker Was Down" pings. Cron-only removes the forking entirely.
+  # The chain used to FORK: any extra trigger (a stray cron fire, a manual run,
+  # a /restart) made a run that ALSO scheduled its own next run, so two parallel
+  # chains would run ~5min apart forever. Those parallel chains read stale state
+  # cache and each posted "Tracker Was Down", which was the alert spam. The
+  # anti-fork guard in the dispatch step now collapses parallel chains back to
+  # a single chain.
   schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch:               # manual trigger
+    - cron: '*/30 * * * *'         # sparse fallback only — revives a dead chain
+  workflow_dispatch:               # manual trigger / bootstrap
   repository_dispatch:
-    # On-demand immediate runs only — fired by the /restart command and by the
-    # cookie updater after a new cookie is saved. This is NOT a recurring chain
-    # (the auto self-dispatch that used to fork was removed), so it can't stack.
-    types: [run-tracker]
+    types: [run-tracker]           # the self-sustaining chain + /restart + cookie update
 
 concurrency:
   group: tracker
@@ -104,3 +102,31 @@ jobs:
             .state.json
             epic_auth.json
           key: tracker-runtime-${{ github.run_number }}
+
+      # Self-trigger the next run in ~5 minutes. This chain is the real
+      # scheduler (the */5 cron is throttled to nothing for this repo).
+      - name: Keep the 5-minute chain alive
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 290
+          # Anti-fork guard: only fire the next run if THIS job is the only
+          # tracker run currently active. If another run is already queued or in
+          # progress, a parallel chain exists — stop this one and let that one
+          # carry on, so any accidental forks collapse back to a single chain.
+          # (This job itself counts as one in_progress run, hence "-le 1".)
+          active=$(gh run list --repo "${{ github.repository }}" --workflow tracker.yml \
+                     --json status \
+                     --jq '[.[] | select(.status=="queued" or .status=="in_progress")] | length' \
+                     2>/dev/null || echo 1)
+          if [ "${active:-1}" -le 1 ]; then
+            echo "Sole active run — dispatching next run."
+            curl -s -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/${{ github.repository }}/dispatches \
+              -d '{"event_type":"run-tracker"}'
+          else
+            echo "Anti-fork: $active runs active — not dispatching (a parallel chain continues)."
+          fi
