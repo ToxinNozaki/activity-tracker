@@ -136,12 +136,17 @@ def main():
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # ── Auto-recovery: warn if we missed runs ────────────────────────────────
-    # Guard: last_run_ts being None means this is the first ever run — skip
+    # Guard: last_run_ts being None means this is the first ever run — skip.
+    #
+    # Threshold is 20 min (≈3+ missed 5-min cycles) so normal GitHub scheduling
+    # jitter and the */30 cron fallback don't trip a false "down" alert. The
+    # 60-min cooldown guarantees a single real outage produces at most one ping
+    # even if several runs come in a burst when the tracker resumes.
     if state.get("last_run_ts"):
         gap = minutes_since(state.get("last_run_ts"))
-        if gap > 15:
+        if gap >= 20:
             last_warn = state.get("last_recovery_warning_ts")
-            if not last_warn or minutes_since(last_warn) > 30:
+            if not last_warn or minutes_since(last_warn) >= 60:
                 notify_missed_runs(gap)
                 state["last_recovery_warning_ts"] = now_iso
                 logging.warning("Auto-recovery: %.0f minute gap detected", gap)

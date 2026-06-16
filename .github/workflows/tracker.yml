@@ -1,11 +1,25 @@
 name: Activity Tracker
 
 on:
+  # The cron is the SOLE scheduler. It runs every 5 minutes, and the
+  # concurrency group below serializes runs so they never overlap or race on
+  # the state cache.
+  #
+  # The old setup also ran a self-dispatching repository_dispatch chain
+  # (sleep 290 -> fire the next run). That chain could FORK: any time two runs
+  # executed close together (cron colliding with the chain, or a manual run),
+  # each one scheduled its own "next run", permanently doubling the cadence.
+  # The resulting stacked, back-to-back runs restored stale state cache before
+  # the previous run's save had propagated, producing the false
+  # "Tracker Was Down" pings. Cron-only removes the forking entirely.
   schedule:
-    - cron: '*/5 * * * *'        # fallback if the self-trigger chain breaks
+    - cron: '*/5 * * * *'
   workflow_dispatch:               # manual trigger
   repository_dispatch:
-    types: [run-tracker]           # self-trigger (GITHUB_TOKEN can fire this)
+    # On-demand immediate runs only — fired by the /restart command and by the
+    # cookie updater after a new cookie is saved. This is NOT a recurring chain
+    # (the auto self-dispatch that used to fork was removed), so it can't stack.
+    types: [run-tracker]
 
 concurrency:
   group: tracker
@@ -15,7 +29,7 @@ jobs:
   track:
     runs-on: ubuntu-latest
     permissions:
-      contents: write              # needed so GITHUB_TOKEN can fire repository_dispatch
+      contents: write              # lets github.token fire repository_dispatch (/restart)
 
     steps:
       - name: Checkout repo
@@ -90,16 +104,3 @@ jobs:
             .state.json
             epic_auth.json
           key: tracker-runtime-${{ github.run_number }}
-
-      # Self-trigger next run via repository_dispatch (GITHUB_TOKEN allowed for this)
-      - name: Schedule next run in 5 minutes
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          sleep 290
-          curl -s -X POST \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/dispatches \
-            -d '{"event_type":"run-tracker"}'
