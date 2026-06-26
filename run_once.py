@@ -129,8 +129,13 @@ def main():
     if epic_secret and not auth_file.exists():
         auth_file.write_text(epic_secret)
 
-    # Check for /setcookie DM command before anything else
-    check_for_cookie_update()
+    # Check for /setcookie DM command before anything else. Wrapped so a
+    # transient Discord/GitHub blip in this auxiliary step can never abort the
+    # core Roblox tracking below.
+    try:
+        check_for_cookie_update()
+    except Exception as e:
+        logging.warning("Cookie-update check failed (non-fatal): %s", e)
 
     state = load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -157,7 +162,10 @@ def main():
         state["last_credential_check_ts"] = now_iso
 
     # ── Handle server channel commands (/restart, /status, /help) ───────────
-    check_server_commands(state)
+    try:
+        check_server_commands(state)
+    except Exception as e:
+        logging.warning("Server-command check failed (non-fatal): %s", e)
 
     roblox_ok  = True
     roblox_msg = ""

@@ -11,6 +11,7 @@ Available commands:
 """
 
 import os
+import time
 import logging
 import requests
 from datetime import datetime, timezone, timedelta
@@ -32,12 +33,34 @@ _LAST_CMD_ID = "last_handled_command_id"
 
 # ── Discord helpers ───────────────────────────────────────────────────────────
 
+class _FailedResponse:
+    """Returned when a Discord request fails outright (timeout / connection drop)
+    so callers keep working with the r.ok / r.json() pattern instead of crashing
+    the whole tracker run on a transient network blip."""
+    ok = False
+    status_code = 0
+    text = ""
+
+    def json(self):
+        return {}
+
+
 def _d(method: str, path: str, **kwargs):
-    return requests.request(
-        method, f"{_DISCORD}{path}",
-        headers={"Authorization": f"Bot {BOT_TOKEN}"},
-        timeout=10, **kwargs,
-    )
+    # (connect, read) timeout — Discord's read side occasionally stalls past 10s.
+    kwargs.setdefault("timeout", (5, 20))
+    for attempt in range(3):
+        try:
+            return requests.request(
+                method, f"{_DISCORD}{path}",
+                headers={"Authorization": f"Bot {BOT_TOKEN}"},
+                **kwargs,
+            )
+        except requests.exceptions.RequestException as e:
+            logging.warning("bot_commands: Discord %s %s failed (attempt %d): %s",
+                            method, path, attempt + 1, e)
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+    return _FailedResponse()
 
 
 def _reply(content: str = "", embeds: list | None = None, reply_to: str | None = None):
